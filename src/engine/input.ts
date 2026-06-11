@@ -27,6 +27,7 @@ export function attachInput(canvas: HTMLCanvasElement, machine: InteractionMachi
     e.preventDefault() // the canvas owns all scrolling
     machine.onWheel(pos(e), e)
   }
+  const onDblClick = (e: MouseEvent) => machine.onDoubleClick(pos(e), e)
   const onContextMenu = (e: Event) => e.preventDefault()
 
   const editableTarget = (e: KeyboardEvent): boolean => {
@@ -49,6 +50,7 @@ export function attachInput(canvas: HTMLCanvasElement, machine: InteractionMachi
   canvas.addEventListener('pointerup', onPointerUp)
   canvas.addEventListener('pointercancel', onPointerCancel)
   canvas.addEventListener('wheel', onWheel, { passive: false })
+  canvas.addEventListener('dblclick', onDblClick)
   canvas.addEventListener('contextmenu', onContextMenu)
   window.addEventListener('keydown', onKeyDown)
   window.addEventListener('keyup', onKeyUp)
@@ -60,6 +62,7 @@ export function attachInput(canvas: HTMLCanvasElement, machine: InteractionMachi
     canvas.removeEventListener('pointerup', onPointerUp)
     canvas.removeEventListener('pointercancel', onPointerCancel)
     canvas.removeEventListener('wheel', onWheel)
+    canvas.removeEventListener('dblclick', onDblClick)
     canvas.removeEventListener('contextmenu', onContextMenu)
     window.removeEventListener('keydown', onKeyDown)
     window.removeEventListener('keyup', onKeyUp)

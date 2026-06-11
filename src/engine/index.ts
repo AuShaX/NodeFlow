@@ -1,39 +1,53 @@
-import type { SceneSource } from '../types'
+import * as Y from 'yjs'
 import { Animator } from './animator'
 import { Renderer } from './renderer'
 import { InteractionMachine } from './interactions'
+import { BoardActions } from './actions'
 import { attachInput } from './input'
 import { uiStore } from '../state/store'
+import type { Board } from '../doc/board'
+import { createBoard } from '../doc/board'
 
 export interface Engine {
   renderer: Renderer
   animator: Animator
   machine: InteractionMachine
-  scene: SceneSource
+  actions: BoardActions
+  board: Board
   destroy(): void
 }
 
-/** Reference to the live engine for chrome components (HUD, toolbar). */
+/** Reference to the live engine for chrome components (HUD, toolbar, editor overlay). */
 export const engineRef: { current: Engine | null } = { current: null }
 
 /**
- * Composition root: builds renderer + animator + interaction machine around
- * a canvas and a scene, wires input and resize, fits the camera to content.
+ * Composition root: animator + board (Yjs doc, mirror, undo) + renderer +
+ * interaction machine around a canvas. Data flow per SPEC §4: input →
+ * machine → mutation API → observers update mirror → layout → animator →
+ * renderer.
  */
-export function createEngine(canvas: HTMLCanvasElement, scene: SceneSource): Engine {
+export function createEngine(canvas: HTMLCanvasElement, doc: Y.Doc): Engine {
   const animator = new Animator()
-  const renderer = new Renderer(canvas, scene, animator, () => {
+  let renderer: Renderer | null = null
+  const board = createBoard(animator, () => renderer?.requestPaint(), doc)
+  renderer = new Renderer(canvas, board.mirror, animator, () => {
     const s = uiStore.getState()
-    return { camera: s.camera, selection: s.selection, hover: s.hover, editingId: s.editingId }
+    return {
+      camera: s.camera,
+      selection: s.selection,
+      hover: s.hover,
+      editingId: s.editing?.id ?? null,
+    }
   })
-  const machine = new InteractionMachine({ canvas, scene, renderer, animator })
+  const actions = new BoardActions(board)
+  const machine = new InteractionMachine({ canvas, board, renderer, animator, actions })
   const detachInput = attachInput(canvas, machine)
 
   // Repaint on any UI-store change (selection from chrome, HUD toggle, ...).
   // The dirty flag makes redundant requests free.
-  const unsubscribe = uiStore.subscribe(() => renderer.requestPaint())
+  const unsubscribe = uiStore.subscribe(() => renderer!.requestPaint())
 
-  const ro = new ResizeObserver(() => renderer.resize())
+  const ro = new ResizeObserver(() => renderer!.resize())
   ro.observe(canvas)
 
   // DPR changes (moving the window between displays) need a backing-store resize.
@@ -43,16 +57,16 @@ export function createEngine(canvas: HTMLCanvasElement, scene: SceneSource): Eng
     if (dprQuery && dprListener) dprQuery.removeEventListener('change', dprListener)
     dprQuery = matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`)
     dprListener = () => {
-      renderer.resize()
+      renderer!.resize()
       watchDpr()
     }
     dprQuery.addEventListener('change', dprListener)
   }
   watchDpr()
 
-  // Initial view: fit the demo content once the canvas has a real size.
+  // Initial view: fit the content once the canvas has a real size.
   requestAnimationFrame(() => {
-    renderer.resize()
+    renderer!.resize()
     machine.fitToContent()
   })
 
@@ -60,14 +74,16 @@ export function createEngine(canvas: HTMLCanvasElement, scene: SceneSource): Eng
     renderer,
     animator,
     machine,
-    scene,
+    actions,
+    board,
     destroy() {
       engineRef.current = null
       unsubscribe()
       detachInput()
       ro.disconnect()
       if (dprQuery && dprListener) dprQuery.removeEventListener('change', dprListener)
-      renderer.destroy()
+      renderer!.destroy()
+      board.destroy()
     },
   }
   engineRef.current = engine

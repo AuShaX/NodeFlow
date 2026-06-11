@@ -9,11 +9,17 @@ export type Tool = 'select' | 'addRoot' | 'link'
  * state. Document truth lives in Yjs. The engine reads via uiStore.getState()
  * — never inside the paint loop hot path except the per-frame camera read.
  */
+export interface EditingState {
+  id: string
+  /** what the editor should start with (typed-over text or the node's text) */
+  initialText: string
+}
+
 export interface UIState {
   camera: Camera
   selection: ReadonlySet<string>
   hover: string | null
-  editingId: string | null
+  editing: EditingState | null
   tool: Tool
   spaceDown: boolean
   hudVisible: boolean
@@ -23,7 +29,7 @@ export const uiStore = createStore<UIState>()(() => ({
   camera: { x: 0, y: 0, zoom: 1 },
   selection: new Set<string>(),
   hover: null,
-  editingId: null,
+  editing: null,
   tool: 'select',
   spaceDown: false,
   hudVisible: false,

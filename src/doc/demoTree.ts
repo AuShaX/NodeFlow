@@ -8,6 +8,8 @@ export interface DemoNode {
   key?: string
   text: string
   collapsed?: boolean
+  /** side of the root for depth-1 branches */
+  side?: 'left' | 'right'
   children?: DemoNode[]
 }
 
@@ -23,6 +25,7 @@ export const demoRoot: DemoNode = {
   children: [
     {
       text: 'Strategy',
+      side: 'right',
       children: [
         {
           text: 'Positioning',
@@ -41,6 +44,7 @@ export const demoRoot: DemoNode = {
     },
     {
       text: 'Marketing',
+      side: 'left',
       children: [
         {
           text: 'Launch channels',
@@ -66,6 +70,7 @@ export const demoRoot: DemoNode = {
     },
     {
       text: 'Engineering',
+      side: 'right',
       collapsed: true,
       children: [
         {
@@ -86,6 +91,7 @@ export const demoRoot: DemoNode = {
     },
     {
       text: 'Operations',
+      side: 'right',
       children: [
         { text: 'Support runbook' },
         { text: 'Status page' },
@@ -97,6 +103,7 @@ export const demoRoot: DemoNode = {
     },
     {
       text: 'Risks',
+      side: 'left',
       children: [
         { text: 'Scope creep' },
         { text: 'App-store rejection' },

@@ -31,3 +31,33 @@ Running log of spec deviations and judgment calls, newest last. (SPEC §3.)
   than a true tapered fill path; revisit in the M7 polish pass if it reads flat.
 - **Connector axis/style live on the root** (`dir`, `connectorStyle`) and are resolved by
   walking parents in the renderer; M1 demo content is horizontal/curved only.
+
+## M2 — Mindmap core
+
+- **`textStyle` is stored as two flat Yjs fields** (`textSize`, `bold`) instead of a nested
+  object — field-level updates and merges are simpler, and the mirror reassembles the
+  `textStyle` object the renderer expects.
+- **Root positions reuse `mx`/`my` as absolute world coordinates** (a root's "computed slot"
+  is the origin). Avoids extra schema fields; manual-offset semantics stay uniform.
+- **Manual (free-moved) node slots are parent-relative:** final position = parentCenter +
+  (mx, my). SPEC §6 says "computed slot + (mx,my)" but a packing slot for a node excluded
+  from packing is ill-defined; anchoring to the parent keeps offsets stable as siblings
+  reflow, which is what free-move should feel like.
+- **Fractional order keys are base-62** (`0-9A-Za-z`), not base-95 — same mechanics, keys
+  stay readable in debuggers, and avoiding quote/backslash characters spares escaping pain.
+- **Order-key edge case:** `keyBetween` pads with one-past-max when the upper bound is open,
+  so append-heavy flows (the common case) grow keys logarithmically.
+- **Undo steps:** `captureTimeout: 0` (every transaction = one step) with two carve-outs:
+  intermediate gesture/typing writes use an untracked `ephemeralOrigin`, and a new node's
+  first text commit merges into its creation item (one Tab+type = one undo). Committing a
+  brand-new node with empty text _undoes_ the creation, leaving history clean — Miro-style
+  "Enter on empty node ends the outliner chain".
+- **Deleted subtrees fade out in place** (alpha+scale, 120ms) including their connectors,
+  via an `exiting` list the renderer paints after live nodes. They don't drift toward the
+  parent — geometry stays put, which reads calmer next to the simultaneous reflow.
+- **Collapse tweens children into the nearest visible ancestor** and back out on expand
+  (`vanishing` flag keeps them painted while animating out, spatial index drops them
+  immediately so hit-testing is correct).
+- **The mirror rebuilds derived data (children/depth/colors/counts) globally per change
+  batch** rather than per-subtree: it's a linear pass over plain objects (sub-ms at 1k
+  nodes); layout — the expensive part — stays scoped to dirty roots per SPEC §6.

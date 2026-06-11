@@ -177,7 +177,7 @@ export class Renderer {
     //    reuse the paint list to visit every parent→child edge once).
     for (const id of paintList) {
       const child = nodes.get(id)
-      if (!child || !child.visible || child.parentId === null) continue
+      if (!child || (!child.visible && !child.vanishing) || child.parentId === null) continue
       const parent = nodes.get(child.parentId)
       if (!parent) continue
       if (!rectsIntersect(connectorBounds(parent, child), cullView)) continue
@@ -195,7 +195,7 @@ export class Renderer {
     // 3) Nodes, parents before children.
     for (const id of paintList) {
       const n = nodes.get(id)
-      if (!n || !n.visible) continue
+      if (!n || (!n.visible && !n.vanishing)) continue
       if (!visibleIds.has(id) && !rectsIntersect(nodeRect(n), cullView)) continue
       drawNode(ctx, n, {
         zoom,
@@ -207,7 +207,26 @@ export class Renderer {
       painted++
     }
 
-    // 4) Overlays (drag previews, marquee) — drawn by the interaction layer.
+    // 4) Deleted nodes still fading out (with their edges, so subtrees fade whole).
+    for (const n of this.scene.exiting) {
+      if (!rectsIntersect(nodeRect(n), cullView)) continue
+      if (n.parentId !== null) {
+        const parent = this.scene.getAnyNode(n.parentId)
+        if (parent) {
+          drawTreeConnector(ctx, parent, n, this.connectorAxis(n), this.connectorStyleFor(n))
+        }
+      }
+      drawNode(ctx, n, {
+        zoom,
+        selected: false,
+        hovered: false,
+        editing: false,
+        outward: 'right',
+      })
+      painted++
+    }
+
+    // 5) Overlays (drag previews, marquee) — drawn by the interaction layer.
     this.overlayPainter?.(ctx, camera)
 
     this.finishStats(t0, now, painted)
@@ -235,8 +254,7 @@ export class Renderer {
 
   private rootOf(n: NodeView): NodeView | undefined {
     let cur: NodeView | undefined = n
-    const nodes = this.scene.nodes
-    while (cur && cur.parentId !== null) cur = nodes.get(cur.parentId)
+    while (cur && cur.parentId !== null) cur = this.scene.getAnyNode(cur.parentId)
     return cur
   }
 

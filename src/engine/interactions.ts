@@ -1,15 +1,17 @@
-import type { Point, SceneSource } from '../types'
+import type { Point } from '../types'
 import type { Camera } from './camera'
 import { centerOn, fitBounds, panByScreen, screenToWorld, zoomAtPoint } from './camera'
 import type { Renderer } from './renderer'
 import type { Animator } from './animator'
+import type { BoardActions } from './actions'
+import type { Board } from '../doc/board'
 import { hitTestNode } from './hitTest'
 import { clearSelection, setSelection, toggleSelected, uiStore } from '../state/store'
 
 /**
- * Explicit interaction state machine (SPEC §9). M1 implements idle / panning
- * / spacePan plus wheel pan-zoom and click selection; drag states arrive in
- * M3, editing in M2.
+ * Explicit interaction state machine (SPEC §9). M2 scope: idle / panning /
+ * pressing plus the full keyboard layer (creation, navigation, editing,
+ * undo). Drag states land in M3.
  */
 type InteractionState =
   | { kind: 'idle' }
@@ -25,9 +27,10 @@ type InteractionState =
 
 export interface EngineHost {
   canvas: HTMLCanvasElement
-  scene: SceneSource
+  board: Board
   renderer: Renderer
   animator: Animator
+  actions: BoardActions
 }
 
 export class InteractionMachine {
@@ -38,6 +41,10 @@ export class InteractionMachine {
     this.host = host
   }
 
+  private get scene() {
+    return this.host.board.mirror
+  }
+
   // ------------------------------------------------------------ pointer
 
   onPointerDown(pos: Point, e: PointerEvent): void {
@@ -45,6 +52,8 @@ export class InteractionMachine {
     const middle = e.button === 1
     const left = e.button === 0
     if (!middle && !left) return
+
+    if (uiStore.getState().editing) return // editor overlay owns the pointer until blur
 
     if (middle || uiStore.getState().spaceDown) {
       this.state = {
@@ -60,7 +69,7 @@ export class InteractionMachine {
     }
 
     const world = screenToWorld(this.camera, pos.x, pos.y)
-    const hitNode = hitTestNode(this.host.scene, world)
+    const hitNode = hitTestNode(this.scene, world)
     if (hitNode) {
       // Select on press, like Miro. Shift toggles into multi-selection.
       if (e.shiftKey) toggleSelected(hitNode.id)
@@ -93,7 +102,7 @@ export class InteractionMachine {
     switch (st.kind) {
       case 'idle': {
         const world = screenToWorld(this.camera, pos.x, pos.y)
-        const hit = hitTestNode(this.host.scene, world)
+        const hit = hitTestNode(this.scene, world)
         const hover = hit ? hit.id : null
         if (uiStore.getState().hover !== hover) {
           uiStore.setState({ hover })
@@ -108,7 +117,7 @@ export class InteractionMachine {
         if (dx === 0 && dy === 0) return
         st.lastX = pos.x
         st.lastY = pos.y
-        if (Math.abs(dx) + Math.abs(dy) > 0) st.moved = true
+        st.moved = true
         // Content follows the cursor: dragging right moves the camera left.
         this.setCamera(panByScreen(this.camera, -dx, -dy))
         return
@@ -146,6 +155,19 @@ export class InteractionMachine {
     }
   }
 
+  onDoubleClick(pos: Point, e: MouseEvent): void {
+    if (e.button !== 0 || uiStore.getState().editing) return
+    const world = screenToWorld(this.camera, pos.x, pos.y)
+    const hit = hitTestNode(this.scene, world)
+    if (hit) {
+      setSelection([hit.id])
+      this.host.actions.startEdit(hit.id, null)
+    } else {
+      // Double-click on empty canvas: new floating root, edit immediately.
+      this.host.actions.addRootAt(world.x, world.y)
+    }
+  }
+
   // -------------------------------------------------------------- wheel
 
   onWheel(pos: Point, e: WheelEvent): void {
@@ -163,9 +185,25 @@ export class InteractionMachine {
 
   onKeyDown(e: KeyboardEvent): void {
     const mod = e.metaKey || e.ctrlKey
+    const { actions } = this.host
+    const selection = uiStore.getState().selection
+    const selectedId = selection.size > 0 ? [...selection][selection.size - 1] : null
+
     if (e.code === 'Space' && !e.repeat) {
       uiStore.setState({ spaceDown: true })
       this.applyCursor()
+      e.preventDefault()
+      return
+    }
+
+    // ---- global chords
+    if (mod && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+      actions.undo()
+      e.preventDefault()
+      return
+    }
+    if (mod && e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+      actions.redo()
       e.preventDefault()
       return
     }
@@ -184,9 +222,64 @@ export class InteractionMachine {
       e.preventDefault()
       return
     }
+    if (mod && e.key === 'a') {
+      setSelection(this.scene.paintList.filter((id) => this.scene.nodes.get(id)?.visible))
+      e.preventDefault()
+      return
+    }
     if (e.key === 'Escape') {
       clearSelection()
       this.repaint()
+      return
+    }
+
+    // ---- selected-node commands
+    if (!selectedId) return
+    if (e.key === 'Tab' && !e.shiftKey) {
+      actions.addChild(selectedId)
+      e.preventDefault()
+      return
+    }
+    if (e.key === 'Tab' && e.shiftKey) {
+      actions.selectParent()
+      e.preventDefault()
+      return
+    }
+    if (e.key === 'Enter') {
+      actions.addSiblingAfter(selectedId)
+      e.preventDefault()
+      return
+    }
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      actions.deleteSelection()
+      e.preventDefault()
+      return
+    }
+    if (e.key === 'F2') {
+      actions.startEdit(selectedId, null)
+      e.preventDefault()
+      return
+    }
+    if (e.key === '.' || (mod && e.key === '/')) {
+      actions.toggleCollapse(selectedId)
+      e.preventDefault()
+      return
+    }
+    if (
+      e.key === 'ArrowLeft' ||
+      e.key === 'ArrowRight' ||
+      e.key === 'ArrowUp' ||
+      e.key === 'ArrowDown'
+    ) {
+      actions.navigate(e.key)
+      e.preventDefault()
+      return
+    }
+    // Start typing → edit, replacing content (like Miro/Excel).
+    if (!mod && !e.altKey && e.key.length === 1 && e.key !== ' ') {
+      actions.startEdit(selectedId, e.key)
+      e.preventDefault()
+      return
     }
   }
 
@@ -206,7 +299,7 @@ export class InteractionMachine {
   // ------------------------------------------------------------ actions
 
   fitToContent(): void {
-    const bounds = this.host.scene.contentBounds()
+    const bounds = this.scene.contentBounds()
     if (!bounds) return
     const { w, h } = this.host.renderer.viewportSize
     this.setCamera(fitBounds(bounds, w, h))

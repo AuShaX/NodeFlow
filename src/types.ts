@@ -66,6 +66,8 @@ export interface NodeView {
   subtreeCount: number
   /** false when any ancestor is collapsed */
   visible: boolean
+  /** still painted while animating out (collapse / delete) */
+  vanishing: boolean
 }
 
 export interface LinkView {
@@ -93,6 +95,10 @@ export interface SceneSource {
   rootIds: readonly string[]
   links: readonly LinkView[]
   spatial: SpatialQuery
+  /** deleted nodes still fading out; painted after the main pass */
+  exiting: readonly NodeView[]
+  /** look up a live node, falling back to exiting ones (for edge painting) */
+  getAnyNode(id: string): NodeView | undefined
   /** union of all subtree bounds, or null when the board is empty */
   contentBounds(): Rect | null
 }

@@ -9,6 +9,7 @@ import type { Board } from '../doc/board'
 import { createBoard } from '../doc/board'
 
 export interface Engine {
+  canvas: HTMLCanvasElement
   renderer: Renderer
   animator: Animator
   machine: InteractionMachine
@@ -47,8 +48,11 @@ export function createEngine(canvas: HTMLCanvasElement, doc: Y.Doc): Engine {
   const detachInput = attachInput(canvas, machine)
 
   // Repaint on any UI-store change (selection from chrome, HUD toggle, ...).
-  // The dirty flag makes redundant requests free.
-  const unsubscribe = uiStore.subscribe(() => renderer!.requestPaint())
+  // The dirty flag makes redundant requests free. Cursor follows tool changes.
+  const unsubscribe = uiStore.subscribe((s, prev) => {
+    renderer!.requestPaint()
+    if (s.tool !== prev.tool) machine.syncUi()
+  })
 
   const ro = new ResizeObserver(() => renderer!.resize())
   ro.observe(canvas)
@@ -74,6 +78,7 @@ export function createEngine(canvas: HTMLCanvasElement, doc: Y.Doc): Engine {
   })
 
   const engine: Engine = {
+    canvas,
     renderer,
     animator,
     machine,

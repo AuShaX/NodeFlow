@@ -9,6 +9,7 @@ import { ROOT_DEFAULT_COLOR } from '../theme'
 import type { LayoutNodeData, SpacingTokens } from '../layout/mindmapLayout'
 import { DEFAULT_SPACING, layoutMindmapRoot } from '../layout/mindmapLayout'
 import type { BoardDoc } from './schema'
+import { getSpacing } from './schema'
 
 /**
  * Yjs → plain-JS mirror (SPEC §5). Subscribes to the document, maintains
@@ -53,6 +54,7 @@ export class Mirror implements SceneSource {
   phantomSlot: { x: number; y: number } | null = null
 
   spacing: SpacingTokens = { ...DEFAULT_SPACING }
+  boardName = ''
   lastLayoutMs = 0
   /** bumped on every doc-driven update (cheap change detection for chrome) */
   version = 0
@@ -67,23 +69,63 @@ export class Mirror implements SceneSource {
   private bd: BoardDoc
   private animator: Animator
   private onUpdate: () => void
+  private listeners = new Set<() => void>()
   private observingNodes: (events: Y.YEvent<Y.Map<unknown>>[]) => void
   private observingLinks: () => void
+  private observingMeta: () => void
 
   constructor(bd: BoardDoc, animator: Animator, onUpdate: () => void) {
     this.bd = bd
     this.animator = animator
     this.onUpdate = onUpdate
+    this.spacing = getSpacing(bd)
+    this.boardName = (bd.meta.get('name') as string) ?? ''
     this.observingNodes = (events) => this.handleNodeEvents(events)
     this.observingLinks = () => this.rebuildLinks()
+    this.observingMeta = () => this.handleMetaChange()
     bd.nodes.observeDeep(this.observingNodes)
     bd.links.observeDeep(this.observingLinks)
+    bd.meta.observe(this.observingMeta)
     this.fullRebuild()
   }
 
   destroy(): void {
     this.bd.nodes.unobserveDeep(this.observingNodes)
     this.bd.links.unobserveDeep(this.observingLinks)
+    this.bd.meta.unobserve(this.observingMeta)
+    this.listeners.clear()
+  }
+
+  /** Chrome subscription: fires after every mirror update (version bump). */
+  subscribe(fn: () => void): () => void {
+    this.listeners.add(fn)
+    return () => {
+      this.listeners.delete(fn)
+    }
+  }
+
+  /** Version bump + repaint + chrome notification — every doc-driven update ends here. */
+  private bump(): void {
+    this.version++
+    this.onUpdate()
+    for (const fn of this.listeners) fn()
+  }
+
+  /** Meta changes: spacing tokens reflow every tree; the name just re-renders chrome. */
+  private handleMetaChange(): void {
+    this.boardName = (this.bd.meta.get('name') as string) ?? ''
+    const next = getSpacing(this.bd)
+    const cur = this.spacing
+    if (
+      next.levelGap !== cur.levelGap ||
+      next.siblingGap !== cur.siblingGap ||
+      next.branchGap !== cur.branchGap ||
+      next.compactness !== cur.compactness
+    ) {
+      this.spacing = next
+      this.relayout(new Set(this.rootIds), new Set())
+    }
+    this.bump()
   }
 
   getAnyNode(id: string): NodeView | undefined {
@@ -151,8 +193,7 @@ export class Mirror implements SceneSource {
     for (const id of topIds) this.dragRoots.add(this.rootOf(id))
     for (const id of all) this.animator.cancel(id)
     this.relayout(new Set(this.dragRoots), new Set())
-    this.version++
-    this.onUpdate()
+    this.bump()
   }
 
   /** Update the drop preview; relays out only when the target actually changed. */
@@ -170,8 +211,7 @@ export class Mirror implements SceneSource {
     if (prev) this.dragRoots.add(this.rootOf(prev.parentId))
     if (p) this.dragRoots.add(this.rootOf(p.parentId))
     this.relayout(new Set(this.dragRoots), new Set())
-    this.version++
-    this.onUpdate()
+    this.bump()
   }
 
   /**
@@ -187,8 +227,7 @@ export class Mirror implements SceneSource {
     this.phantomSlot = null
     this.dragRoots.clear()
     this.relayout(roots, new Set())
-    this.version++
-    this.onUpdate()
+    this.bump()
   }
 
   get isDragging(): boolean {
@@ -282,8 +321,7 @@ export class Mirror implements SceneSource {
       this.rebuildDerived()
       this.refreshSubtreeBoundsAndSpatial()
     }
-    this.version++
-    this.onUpdate()
+    this.bump()
   }
 
   /** Apply one Yjs field to a view. Returns true when the change affects layout. */
@@ -632,8 +670,7 @@ export class Mirror implements SceneSource {
       })
     })
     this.links = out
-    this.version++
-    this.onUpdate()
+    this.bump()
   }
 }
 

@@ -1,6 +1,7 @@
-import type { Side } from '../types'
+import type { ConnectorStyle, LayoutDir, Shape, Side, TextSize } from '../types'
 import type { Board } from '../doc/board'
 import {
+  clearManualOffset,
   createLink,
   createNode,
   createRoot,
@@ -10,11 +11,20 @@ import {
   localOrigin,
   moveNode,
   setCollapsed,
+  setColor,
+  setConnectorStyle,
+  setDir,
+  setBoardName,
   setManualOffset,
   setNodeText,
   setRootPosition,
+  setShape,
+  setSide,
+  setSpacing,
+  setTextStyle,
   updateLink,
 } from '../doc/schema'
+import type { SpacingTokens } from '../layout/mindmapLayout'
 import {
   clipboardHasContent,
   clipboardRead,
@@ -134,6 +144,162 @@ export class BoardActions {
       if (edit) this.startEdit(newId, '', true)
     }
     return newId
+  }
+
+  // ------------------------------------------------------------- styling
+
+  /** Run a per-node style write over many nodes as ONE undo step. */
+  private styleTransact(ids: Iterable<string>, fn: (id: string) => void): void {
+    const live = [...ids].filter((id) => this.mirror.nodes.has(id))
+    if (live.length === 0) return
+    this.board.bd.doc.transact(() => {
+      for (const id of live) fn(id)
+    }, localOrigin)
+  }
+
+  /** color=null clears to "inherit from nearest ancestor". */
+  setNodesColor(ids: Iterable<string>, color: string | null): void {
+    this.styleTransact(ids, (id) => setColor(this.board.bd, id, color))
+  }
+
+  setNodesShape(ids: Iterable<string>, shape: Shape): void {
+    this.styleTransact(ids, (id) => setShape(this.board.bd, id, shape))
+  }
+
+  /** Size and bold are set independently so mixed selections keep their other half. */
+  setNodesTextSize(ids: Iterable<string>, size: TextSize): void {
+    this.styleTransact(ids, (id) => {
+      const n = this.mirror.nodes.get(id)!
+      setTextStyle(this.board.bd, id, size, n.textStyle.bold)
+    })
+  }
+
+  setNodesBold(ids: Iterable<string>, bold: boolean): void {
+    this.styleTransact(ids, (id) => {
+      const n = this.mirror.nodes.get(id)!
+      setTextStyle(this.board.bd, id, n.textStyle.size, bold)
+    })
+  }
+
+  /** Selected ids that are roots (layout controls apply to these). */
+  selectedRoots(ids: Iterable<string>): string[] {
+    return [...ids].filter((id) => this.mirror.nodes.get(id)?.parentId === null)
+  }
+
+  setRootsDir(ids: Iterable<string>, dir: LayoutDir): void {
+    const roots = this.selectedRoots(ids)
+    if (roots.length === 0) return
+    this.board.bd.doc.transact(() => {
+      for (const id of roots) {
+        const prev = this.mirror.nodes.get(id)?.dir ?? 'both'
+        setDir(this.board.bd, id, dir)
+        // Sides from a single-direction layout are stale; redistribute so the
+        // map doesn't unfold lopsided (greedy height balance, right bias).
+        if (dir === 'both' && prev !== 'both') this.rebalanceSides(id)
+      }
+    }, localOrigin)
+  }
+
+  private rebalanceSides(rootId: string): void {
+    const root = this.mirror.nodes.get(rootId)
+    if (!root) return
+    let left = 0
+    let right = 0
+    for (const cid of root.childrenIds) {
+      const child = this.mirror.nodes.get(cid)
+      if (!child) continue
+      const h = Math.max(this.mirror.subtreeHeight(cid), child.height)
+      if (right <= left) {
+        setSide(this.board.bd, cid, 'right')
+        right += h
+      } else {
+        setSide(this.board.bd, cid, 'left')
+        left += h
+      }
+    }
+  }
+
+  setRootsConnector(ids: Iterable<string>, style: ConnectorStyle): void {
+    const roots = this.selectedRoots(ids)
+    if (roots.length === 0) return
+    this.board.bd.doc.transact(() => {
+      for (const id of roots) setConnectorStyle(this.board.bd, id, style)
+    }, localOrigin)
+  }
+
+  /**
+   * Auto-layout state of a root: ON while any direct child still auto-lays-out
+   * (free-moving one child doesn't flip the whole tree to "off").
+   */
+  rootAutoLayoutOn(rootId: string): boolean {
+    const root = this.mirror.nodes.get(rootId)
+    if (!root || root.childrenIds.length === 0) return true
+    return root.childrenIds.some((cid) => this.mirror.nodes.get(cid)?.layout === 'auto')
+  }
+
+  /** OFF freezes direct children at their current offsets (SPEC §6); ON releases them. */
+  toggleRootAutoLayout(rootId: string): void {
+    const root = this.mirror.nodes.get(rootId)
+    if (!root || root.childrenIds.length === 0) return
+    const bd = this.board.bd
+    const freeze = this.rootAutoLayoutOn(rootId)
+    bd.doc.transact(() => {
+      for (const cid of root.childrenIds) {
+        const c = this.mirror.nodes.get(cid)
+        if (!c) continue
+        if (freeze && c.layout !== 'manual') {
+          setManualOffset(bd, cid, c.x - root.x, c.y - root.y)
+        } else if (!freeze && c.layout === 'manual') {
+          clearManualOffset(bd, cid)
+        }
+      }
+    }, localOrigin)
+  }
+
+  /** "Layout nodes" (SPEC §11): clear manual offsets in the subtrees, animated reflow. */
+  layoutNodes(ids: Iterable<string>): void {
+    const targets: string[] = []
+    const collect = (id: string): void => {
+      const n = this.mirror.nodes.get(id)
+      if (!n) return
+      // a root's mx/my is its absolute board position — never cleared
+      if (n.parentId !== null && n.layout === 'manual') targets.push(id)
+      for (const c of n.childrenIds) collect(c)
+    }
+    for (const id of new Set(ids)) collect(id)
+    if (targets.length === 0) return
+    this.board.bd.doc.transact(() => {
+      for (const id of targets) clearManualOffset(this.board.bd, id)
+    }, localOrigin)
+  }
+
+  /** Whether layoutNodes would move anything (toolbar enablement). */
+  hasManualInSubtrees(ids: Iterable<string>): boolean {
+    const check = (id: string): boolean => {
+      const n = this.mirror.nodes.get(id)
+      if (!n) return false
+      if (n.parentId !== null && n.layout === 'manual') return true
+      return n.childrenIds.some(check)
+    }
+    return [...new Set(ids)].some(check)
+  }
+
+  // ---------------------------------------------------------------- board
+
+  renameBoard(name: string): void {
+    const next = name.trim()
+    if (next !== '' && next !== this.mirror.boardName) setBoardName(this.board.bd, next)
+  }
+
+  /** Live spacing writes while a slider drags (untracked). */
+  setSpacingLive(tokens: Partial<SpacingTokens>): void {
+    setSpacing(this.board.bd, tokens, ephemeralOrigin)
+  }
+
+  /** Slider release: restore the start ephemerally, commit the end — one undo step. */
+  commitSpacing(start: Partial<SpacingTokens>, end: Partial<SpacingTokens>): void {
+    setSpacing(this.board.bd, start, ephemeralOrigin)
+    setSpacing(this.board.bd, end, localOrigin)
   }
 
   // --------------------------------------------------------------- links
@@ -518,6 +684,14 @@ export class BoardActions {
     }
     if (state.editingLinkId && !links.some((l) => l.id === state.editingLinkId)) {
       uiStore.setState({ editingLinkId: null })
+    }
+    const menu = state.contextMenu
+    if (menu) {
+      const alive =
+        menu.targetType === 'node'
+          ? this.mirror.nodes.has(menu.targetId)
+          : links.some((l) => l.id === menu.targetId)
+      if (!alive) uiStore.setState({ contextMenu: null })
     }
   }
 }

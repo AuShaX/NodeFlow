@@ -10,7 +10,7 @@ that keep the SaaS path open. Update it whenever research or direction changes.
 ### Stage 1 — v1 mind-map tool (current, SPEC.md M1–M7)
 
 Local-first, single-user, canvas mind mapping with Miro-grade interaction feel.
-Status: M1 ✅ · M2 ✅ · M3 ✅ · M4–M7 pending.
+Status: M1 ✅ · M2 ✅ · M3 ✅ · M4 ✅ · M5 ✅ · M6–M7 pending.
 
 ### Stage 2 — Real-time collaboration
 
@@ -64,11 +64,31 @@ Sources: [Miro Help: Mind map](https://help.miro.com/hc/en-us/articles/360017730
 [Miro community: move element between levels](https://community.miro.com/ask-the-community-45/can-i-move-a-mind-map-element-from-one-level-to-another-397),
 [Miro community: reassign parent](https://community.miro.com/ask-the-community-45/mind-map-how-can-i-select-another-node-to-be-the-parent-node-4030).
 
+### 2026-06-12 — Miro mind-map styling surface (M5 chrome)
+
+Checked against Miro Help Center + community threads before building the context
+toolbar:
+
+- Node customization rides the **context menu/toolbar on the selection**: change style
+  and color, text styling; **Delete** lives behind the three-dots overflow as well as
+  the keyboard.
+- Node shapes are exactly three: **square, rounded square, pill** — matches our SPEC
+  `rect | rounded | pill`.
+- Right-clicking a node opens customization options (color, font size); community
+  threads confirm color/text options are per-node with branch inheritance.
+
+Our deviations, on purpose: adjustable per-board spacing (fixed in Miro — a top user
+complaint) and an explicit auto-layout freeze/release toggle on roots.
+
+Sources: [Miro Help: Mind map](https://help.miro.com/hc/en-us/articles/360017730753-Mind-map),
+[Miro community: change mind map appearance](https://community.miro.com/ask-the-community-45/how-to-change-mind-map-s-appearance-13621),
+[Guideflow: change node style/color in Miro](https://www.guideflow.com/tutorial/how-to-change-the-style-and-color-of-a-node-in-a-miro-mind-map).
+
 ### Open research questions (next passes)
 
-- Miro mind map: exact collapse/expand affordances and badge styling (before M4).
-- Miro cross-link ("connector") editing UX: label placement, arrow toggles (M4).
-- Miro toolbar/context-menu layout for mind maps (M5 chrome).
+- Miro mind map: exact collapse/expand affordances and badge styling (before M4). ✅ M4
+- Miro cross-link ("connector") editing UX: label placement, arrow toggles (M4). ✅ M4
+- Miro toolbar/context-menu layout for mind maps (M5 chrome). ✅ M5 (see above)
 - Pricing teardown: Miro/FigJam/Whimsical tiers and limits (Stage 3 design input).
 - Multiplayer providers comparison: y-websocket vs Liveblocks vs PartyKit costs at small
   scale (Stage 2).

@@ -13,8 +13,11 @@ import { anchorOnBox, drawTreeConnector } from './drawConnector'
 import { COLORS } from '../theme'
 import {
   clearSelection,
+  hideContextMenu,
   setLinkSelection,
   setSelection,
+  setTool,
+  showContextMenu,
   toggleSelected,
   uiStore,
 } from '../state/store'
@@ -97,11 +100,34 @@ export class InteractionMachine {
 
   onPointerDown(pos: Point, e: PointerEvent): void {
     if (this.state.kind !== 'idle') return // ignore extra pointers for now
+    const right = e.button === 2
     const middle = e.button === 1
     const left = e.button === 0
-    if (!middle && !left) return
+    if (!right && !middle && !left) return
 
     if (uiStore.getState().editing) return // editor overlay owns the pointer until blur
+    hideContextMenu() // any fresh canvas press dismisses an open menu
+
+    // Right-click: select the target and open its context menu.
+    if (right) {
+      const world = screenToWorld(this.camera, pos.x, pos.y)
+      const hitNode = hitTestNode(this.scene, world)
+      if (hitNode) {
+        if (!uiStore.getState().selection.has(hitNode.id)) setSelection([hitNode.id])
+        showContextMenu({ x: pos.x, y: pos.y, targetId: hitNode.id, targetType: 'node' })
+        this.repaint()
+        return
+      }
+      const hitLink = hitTestLink(this.scene, world, this.camera.zoom)
+      if (hitLink) {
+        setLinkSelection(hitLink.id)
+        showContextMenu({ x: pos.x, y: pos.y, targetId: hitLink.id, targetType: 'link' })
+        this.repaint()
+        return
+      }
+      // right-click on empty = no menu
+      return
+    }
 
     if (middle || uiStore.getState().spaceDown) {
       this.state = {
@@ -111,11 +137,36 @@ export class InteractionMachine {
         lastY: pos.y,
         via: middle ? 'middle' : 'space',
       }
-      this.applyCursor()
+      this.syncUi()
       return
     }
 
     const world = screenToWorld(this.camera, pos.x, pos.y)
+
+    // Active tool (bottom toolbar) takes the press before normal selection.
+    const tool = uiStore.getState().tool
+    if (tool === 'addRoot') {
+      setTool('select')
+      this.host.actions.addRootAt(world.x, world.y)
+      this.syncUi()
+      return
+    }
+    if (tool === 'link') {
+      const from = hitTestNode(this.scene, world)
+      if (from) {
+        this.state = {
+          kind: 'draggingLink',
+          pointerId: e.pointerId,
+          fromId: from.id,
+          curWorld: world,
+        }
+      } else {
+        setTool('select') // clicking empty cancels the tool
+      }
+      this.syncUi()
+      this.repaint()
+      return
+    }
 
     // Affordances (collapse badge / +/– / link dot) take priority over bodies.
     const affordance = this.affordanceUnderPointer(world)
@@ -133,7 +184,7 @@ export class InteractionMachine {
           fromId: node.id,
           curWorld: world,
         }
-        this.applyCursor()
+        this.syncUi()
       }
       this.repaint()
       return
@@ -153,6 +204,7 @@ export class InteractionMachine {
         ctrl: e.ctrlKey || e.metaKey,
         alt: e.altKey,
       }
+      this.syncUi()
       this.repaint()
       return
     }
@@ -172,6 +224,7 @@ export class InteractionMachine {
       startY: pos.y,
       shift: e.shiftKey,
     }
+    this.syncUi()
   }
 
   onPointerMove(pos: Point, e: PointerEvent): void {
@@ -214,7 +267,7 @@ export class InteractionMachine {
           curWorld: screenToWorld(this.camera, pos.x, pos.y),
           base: st.shift ? uiStore.getState().selection : new Set(),
         }
-        this.applyCursor()
+        this.syncUi()
         this.updateMarquee()
         return
       }
@@ -282,6 +335,7 @@ export class InteractionMachine {
         if (target && target.id !== st.fromId) {
           this.host.actions.createCrossLink(st.fromId, target.id)
         }
+        if (uiStore.getState().tool === 'link') setTool('select') // one link per activation
         this.state = { kind: 'idle' }
         break
       }
@@ -289,7 +343,7 @@ export class InteractionMachine {
         return
     }
     void pos
-    this.applyCursor()
+    this.syncUi()
     this.repaint()
   }
 
@@ -391,7 +445,7 @@ export class InteractionMachine {
         start: { mx: start.mx, my: start.my, layout: start.layout },
         last: { mx: start.mx, my: start.my },
       }
-      this.applyCursor()
+      this.syncUi()
       this.onPointerMove(pos, { pointerId: st.pointerId } as PointerEvent)
       return
     }
@@ -414,7 +468,7 @@ export class InteractionMachine {
       dy: 0,
       preview: null,
     }
-    this.applyCursor()
+    this.syncUi()
     this.repaint()
   }
 
@@ -648,6 +702,7 @@ export class InteractionMachine {
   // -------------------------------------------------------------- wheel
 
   onWheel(pos: Point, e: WheelEvent): void {
+    hideContextMenu()
     const cam = this.camera
     if (isZoomGesture(e)) {
       const factor = wheelZoomFactor(e)
@@ -667,18 +722,25 @@ export class InteractionMachine {
     const selectedId = selection.size > 0 ? [...selection][selection.size - 1] : null
 
     if (e.key === 'Escape') {
-      if (this.state.kind !== 'idle') {
+      // Peel one layer per press: menu → gesture → tool → selection.
+      if (uiStore.getState().contextMenu) {
+        hideContextMenu()
+      } else if (this.state.kind !== 'idle') {
         this.abortGesture()
+      } else if (uiStore.getState().tool !== 'select') {
+        setTool('select')
+        this.syncUi()
       } else {
         clearSelection()
         this.repaint()
       }
       return
     }
+    hideContextMenu() // any other key dismisses an open menu
 
     if (e.code === 'Space' && !e.repeat) {
       uiStore.setState({ spaceDown: true })
-      this.applyCursor()
+      this.syncUi()
       e.preventDefault()
       return
     }
@@ -801,14 +863,14 @@ export class InteractionMachine {
   onKeyUp(e: KeyboardEvent): void {
     if (e.code === 'Space') {
       uiStore.setState({ spaceDown: false })
-      this.applyCursor()
+      this.syncUi()
     }
   }
 
   onWindowBlur(): void {
     uiStore.setState({ spaceDown: false })
     if (this.state.kind !== 'idle') this.abortGesture()
-    this.applyCursor()
+    this.syncUi()
   }
 
   /** Cancel any in-flight gesture, reverting drag effects (SPEC §9 Esc). */
@@ -825,7 +887,7 @@ export class InteractionMachine {
       }
     }
     this.state = { kind: 'idle' }
-    this.applyCursor()
+    this.syncUi()
     this.repaint()
   }
 
@@ -845,6 +907,13 @@ export class InteractionMachine {
     this.setCamera(centerOn(center.x, center.y, 1, w, h))
   }
 
+  /** Zoom in/out around the viewport center (chrome zoom buttons). */
+  zoomBy(factor: number): void {
+    const cam = this.camera
+    const { w, h } = this.host.renderer.viewportSize
+    this.setCamera(zoomAtPoint(cam, cam.zoom * factor, w / 2, h / 2))
+  }
+
   // ------------------------------------------------------------ helpers
 
   private get camera(): Camera {
@@ -860,14 +929,18 @@ export class InteractionMachine {
     this.host.renderer.requestPaint()
   }
 
-  private applyCursor(): void {
+  /** Cursor + gesture mirror, called after every state transition (and on tool changes from chrome). */
+  syncUi(): void {
     const st = this.state
+    const ui = uiStore.getState()
     let cursor = 'default'
     if (st.kind === 'panning') cursor = 'grabbing'
     else if (st.kind === 'draggingNodes' || st.kind === 'draggingFreeMove') cursor = 'grabbing'
     else if (st.kind === 'marquee' || st.kind === 'draggingLink') cursor = 'crosshair'
-    else if (uiStore.getState().spaceDown) cursor = 'grab'
+    else if (ui.spaceDown) cursor = 'grab'
+    else if (ui.tool !== 'select') cursor = 'crosshair'
     this.host.canvas.style.cursor = cursor
+    if (ui.gesture !== st.kind) uiStore.setState({ gesture: st.kind })
   }
 }
 

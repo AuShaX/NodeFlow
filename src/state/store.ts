@@ -15,6 +15,24 @@ export interface EditingState {
   initialText: string
 }
 
+export interface ContextMenu {
+  x: number
+  y: number
+  targetId: string
+  targetType: 'node' | 'link'
+}
+
+/** Interaction-machine state kind, mirrored here so chrome can react to it. */
+export type GestureKind =
+  | 'idle'
+  | 'panning'
+  | 'pressingNode'
+  | 'pressingEmpty'
+  | 'marquee'
+  | 'draggingNodes'
+  | 'draggingFreeMove'
+  | 'draggingLink'
+
 export interface UIState {
   camera: Camera
   selection: ReadonlySet<string>
@@ -24,7 +42,11 @@ export interface UIState {
   editing: EditingState | null
   /** cross-link whose label is being edited inline */
   editingLinkId: string | null
+  contextMenu: ContextMenu | null
+  /** current interaction-machine state (chrome hides itself mid-gesture) */
+  gesture: GestureKind
   tool: Tool
+  stylePanelOpen: boolean
   spaceDown: boolean
   hudVisible: boolean
 }
@@ -36,7 +58,10 @@ export const uiStore = createStore<UIState>()(() => ({
   hover: null,
   editing: null,
   editingLinkId: null,
+  contextMenu: null,
+  gesture: 'idle',
   tool: 'select',
+  stylePanelOpen: false,
   spaceDown: false,
   hudVisible: false,
 }))
@@ -67,4 +92,20 @@ export const toggleSelected = (id: string): void => {
 
 export const setLinkSelection = (id: string | null): void => {
   uiStore.setState({ linkSelection: id, selection: new Set() })
+}
+
+export const showContextMenu = (menu: ContextMenu): void => {
+  uiStore.setState({ contextMenu: menu })
+}
+
+export const hideContextMenu = (): void => {
+  if (uiStore.getState().contextMenu) uiStore.setState({ contextMenu: null })
+}
+
+export const setTool = (tool: Tool): void => {
+  uiStore.setState({ tool })
+}
+
+export const setStylePanelOpen = (open: boolean): void => {
+  uiStore.setState({ stylePanelOpen: open })
 }

@@ -11,6 +11,9 @@ import type {
 } from '../types'
 import { keyBetween } from './order'
 import { BRANCH_PALETTE } from '../theme'
+import type { SpacingTokens } from '../layout/mindmapLayout'
+import { DEFAULT_SPACING, SPACING_RANGES } from '../layout/mindmapLayout'
+import { clamp } from '../types'
 
 /**
  * Yjs document model (SPEC §5). ALL mutations go through functions in this
@@ -367,6 +370,46 @@ export function deleteLink(bd: BoardDoc, linkId: string): void {
 }
 
 // --------------------------------------------------------------------- meta
+
+/**
+ * Per-board layout spacing (SPEC §6), stored as flat meta fields so each
+ * token merges independently. Absent fields read as the defaults.
+ */
+const SPACING_KEYS = {
+  levelGap: 'spacingLevelGap',
+  siblingGap: 'spacingSiblingGap',
+  branchGap: 'spacingBranchGap',
+  compactness: 'spacingCompactness',
+} as const
+
+export function getSpacing(bd: BoardDoc): SpacingTokens {
+  const out = { ...DEFAULT_SPACING }
+  for (const token of Object.keys(SPACING_KEYS) as (keyof SpacingTokens)[]) {
+    const v = bd.meta.get(SPACING_KEYS[token])
+    if (typeof v === 'number' && Number.isFinite(v)) {
+      const [lo, hi] = SPACING_RANGES[token]
+      out[token] = clamp(v, lo, hi)
+    }
+  }
+  return out
+}
+
+/** Pass origin=ephemeralOrigin for live slider writes; commit with localOrigin. */
+export function setSpacing(
+  bd: BoardDoc,
+  tokens: Partial<SpacingTokens>,
+  origin: Origin = localOrigin,
+): void {
+  bd.doc.transact(() => {
+    for (const token of Object.keys(SPACING_KEYS) as (keyof SpacingTokens)[]) {
+      const v = tokens[token]
+      if (v === undefined) continue
+      const [lo, hi] = SPACING_RANGES[token]
+      const next = clamp(v, lo, hi)
+      if (bd.meta.get(SPACING_KEYS[token]) !== next) bd.meta.set(SPACING_KEYS[token], next)
+    }
+  }, origin)
+}
 
 export function setBoardName(bd: BoardDoc, name: string): void {
   bd.doc.transact(() => {

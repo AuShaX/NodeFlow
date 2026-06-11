@@ -24,6 +24,14 @@ export const DEFAULT_SPACING: SpacingTokens = {
   compactness: 1,
 }
 
+/** Sane document bounds per token; the compactness range is fixed by SPEC §6. */
+export const SPACING_RANGES: Record<keyof SpacingTokens, readonly [number, number]> = {
+  levelGap: [24, 120],
+  siblingGap: [4, 48],
+  branchGap: [8, 80],
+  compactness: [0.6, 1.6],
+}
+
 /** The minimal node data layout needs; satisfied by the mirror's NodeView. */
 export interface LayoutNodeData {
   id: string

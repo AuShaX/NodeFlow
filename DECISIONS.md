@@ -107,3 +107,49 @@ Running log of spec deviations and judgment calls, newest last. (SPEC §3.)
   cascades to its links inside the same transaction (single undo step restores both).
 - **Connector draw-in**: new edges fade in with their child's enter animation; the §12
   stroke-dash reveal is deferred to the M7 polish pass (needs per-edge reveal state).
+
+## M5 — Styling & chrome
+
+- **Chrome reactivity = mirror version + subscribe.** The mirror got a `subscribe()`
+  listener set fired on every version bump; React chrome uses it via
+  `useSyncExternalStore` (`useMirrorVersion`) and reads mirror data directly during
+  render. No document state is copied into React state.
+- **Spacing tokens live in Yjs meta** as four flat fields (consistent with the M2
+  flat-`textStyle` call), clamped on read AND write; the mirror observes meta and
+  reflows every root when they change. Slider drags write ephemerally and commit
+  restore-then-write on release — one undo step per drag, like free-move.
+- **Chrome buttons never steal canvas focus**: `preventDefault()` on pointerdown
+  (Figma/Miro pattern), so Tab/Enter keep creating nodes right after a toolbar click.
+  Keyboard users can still Tab into chrome; `input.ts` ignores key events originating
+  inside `[data-chrome]` so chrome-focused keys don't double as canvas shortcuts.
+- **Context toolbar tracks the selection per frame** (rAF writing `transform`, no React
+  re-render) and flips below the selection when clipped by the top bar; popovers read
+  the flip via `data-placement` and always open away from the selection. It hides
+  mid-gesture (marquee/drags) via a `gesture` mirror of the interaction-machine state
+  in the UI store, and while the text editor owns the node.
+- **Toolbar scope mirrors Miro's verified pattern** (see ROADMAP research log): common
+  controls inline (color, shape pill/rounded/rect, text size/bold), root-only controls
+  (direction, connector style, auto-layout) appear only when a root is selected, and
+  the right slide-in panel holds the full set + board spacing. Multi-select applies
+  styles to every selected node in one transaction = one undo step; mixed values show
+  an indeterminate swatch / no highlight.
+- **Auto-layout toggle state is implicit** — ON while any direct child of the root still
+  has `layout:'auto'` — so no schema field was added; toggling OFF freezes direct
+  children at their current offsets (their subtrees keep auto-laying-out beneath them,
+  SPEC §6), ON releases all of them. "Layout nodes" clears manual offsets across the
+  selected subtrees but never a root's `mx/my` (that's its board position).
+- **Switching a root to `dir:'both'` redistributes depth-1 sides** (greedy
+  subtree-height balance, first branch right): sides from a single-direction layout are
+  stale, and unfolding everything on one side reads broken. Side choices are preserved
+  while dir stays `both`.
+- **Tools are one-shot** (add-topic, link): they apply on the next canvas press, then
+  revert to select; Esc cancels. Letter shortcuts for tools are deliberately absent —
+  SPEC §9 reserves bare letters for type-to-edit on the selection.
+- **Right-click selects its target** before opening the context menu (node or link),
+  matching Miro; the menu closes on outside press, Esc (one layer at a time:
+  menu → gesture → tool → selection), wheel, any other key, or when undo removes its
+  target. Right-click on empty canvas intentionally shows nothing in v1.
+- **Search/export/share are visible-but-disabled** top-bar placeholders (export/search
+  land in M6, share with Stage-2 collaboration) so the §12 layout is final without
+  dead-looking gaps later. Floating chrome forwards wheel events to the canvas
+  (non-passive) — no pan/zoom dead zones over the toolbars.

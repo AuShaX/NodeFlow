@@ -33,6 +33,8 @@ export function attachInput(canvas: HTMLCanvasElement, machine: InteractionMachi
   const editableTarget = (e: KeyboardEvent): boolean => {
     const t = e.target
     if (!(t instanceof HTMLElement)) return false
+    // chrome owns its own keys (buttons, menus, panels are marked data-chrome)
+    if (t.closest('[data-chrome]')) return true
     return t.isContentEditable || t.tagName === 'INPUT' || t.tagName === 'TEXTAREA'
   }
   const onKeyDown = (e: KeyboardEvent) => {

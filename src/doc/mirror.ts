@@ -6,7 +6,7 @@ import { measureNode } from '../engine/textMeasure'
 import type { Animator } from '../engine/animator'
 import { ENTER_TWEEN_MS, EXIT_TWEEN_MS } from '../engine/animator'
 import { ROOT_DEFAULT_COLOR } from '../theme'
-import type { SpacingTokens } from '../layout/mindmapLayout'
+import type { LayoutNodeData, SpacingTokens } from '../layout/mindmapLayout'
 import { DEFAULT_SPACING, layoutMindmapRoot } from '../layout/mindmapLayout'
 import type { BoardDoc } from './schema'
 
@@ -29,6 +29,16 @@ const STRUCTURAL_FIELDS = new Set([
 ])
 const TEXT_FIELDS = new Set(['text', 'textSize', 'bold'])
 
+export const PHANTOM_ID = '__phantom__'
+
+/** Live drop preview during a node drag: where the subtree would land. */
+export interface DragPreview {
+  parentId: string
+  /** insertion index among the candidate's (side-filtered) auto children */
+  index: number
+  side: Side | null
+}
+
 export class Mirror implements SceneSource {
   nodes = new Map<string, NodeView>()
   paintList: string[] = []
@@ -37,10 +47,22 @@ export class Mirror implements SceneSource {
   spatial = new SpatialIndex()
   exiting: NodeView[] = []
 
+  /** nodes being dragged (tops + descendants): excluded from layout & main paint */
+  draggingIds: ReadonlySet<string> = new Set()
+  /** where the phantom slot landed in the preview layout (world center) */
+  phantomSlot: { x: number; y: number } | null = null
+
   spacing: SpacingTokens = { ...DEFAULT_SPACING }
   lastLayoutMs = 0
   /** bumped on every doc-driven update (cheap change detection for chrome) */
   version = 0
+
+  private dragTops = new Set<string>()
+  private preview: DragPreview | null = null
+  /** roots touched by drag previews, relaid out together while dragging */
+  private dragRoots = new Set<string>()
+  /** slot changes for these ids apply instantly (free-move follows the cursor) */
+  private immediateIds: ReadonlySet<string> | null = null
 
   private bd: BoardDoc
   private animator: Animator
@@ -93,6 +115,96 @@ export class Mirror implements SceneSource {
   subtreeHeight(id: string): number {
     const n = this.nodes.get(id)
     return n ? n.subtreeBounds.h : 0
+  }
+
+  // ------------------------------------------------------------ drag preview
+
+  /**
+   * Start a node drag: the tops' subtrees leave layout & the main paint pass
+   * (the gap behind them closes, animated). The interaction layer paints them
+   * as a ghost from their frozen render positions.
+   */
+  beginDrag(topIds: string[]): void {
+    this.dragTops = new Set(topIds)
+    const all = new Set<string>()
+    const collect = (id: string): void => {
+      all.add(id)
+      const n = this.nodes.get(id)
+      if (n) for (const c of n.childrenIds) collect(c)
+    }
+    for (const id of topIds) collect(id)
+    this.draggingIds = all
+    this.preview = null
+    this.dragRoots.clear()
+    for (const id of topIds) this.dragRoots.add(this.rootOf(id))
+    for (const id of all) this.animator.cancel(id)
+    this.relayout(new Set(this.dragRoots), new Set())
+    this.version++
+    this.onUpdate()
+  }
+
+  /** Update the drop preview; relays out only when the target actually changed. */
+  setDragPreview(p: DragPreview | null): void {
+    const prev = this.preview
+    const same =
+      (prev === null && p === null) ||
+      (prev !== null &&
+        p !== null &&
+        prev.parentId === p.parentId &&
+        prev.index === p.index &&
+        prev.side === p.side)
+    if (same) return
+    this.preview = p
+    if (prev) this.dragRoots.add(this.rootOf(prev.parentId))
+    if (p) this.dragRoots.add(this.rootOf(p.parentId))
+    this.relayout(new Set(this.dragRoots), new Set())
+    this.version++
+    this.onUpdate()
+  }
+
+  /**
+   * End the drag (commit or revert happens in the caller AFTER this, so the
+   * resulting Yjs relayout sees a drag-free mirror and retargets tweens from
+   * the ghost positions the caller wrote into renderX/renderY).
+   */
+  endDrag(): void {
+    const roots = new Set(this.dragRoots)
+    this.dragTops.clear()
+    this.draggingIds = new Set()
+    this.preview = null
+    this.phantomSlot = null
+    this.dragRoots.clear()
+    this.relayout(roots, new Set())
+    this.version++
+    this.onUpdate()
+  }
+
+  get isDragging(): boolean {
+    return this.dragTops.size > 0
+  }
+
+  /**
+   * The ordered child list insertion indexes refer to: auto-layout children
+   * of `parentId` (excluding any mid-drag tops), side-filtered when the
+   * parent is a both-sides root. Shared by drop-preview layout and commits.
+   */
+  insertionUniverse(parentId: string, side: Side | null, baseKids?: string[]): string[] {
+    const p = this.nodes.get(parentId)
+    if (!p) return []
+    const kids = baseKids ?? p.childrenIds.filter((c) => !this.dragTops.has(c))
+    return kids.filter((c) => {
+      const n = this.nodes.get(c)
+      if (!n || n.layout === 'manual') return false
+      if (p.parentId === null && (p.dir ?? 'both') === 'both' && side) {
+        return (n.side ?? 'right') === side
+      }
+      return true
+    })
+  }
+
+  /** During free-move, slot changes for these ids snap instead of tweening. */
+  setImmediate(ids: ReadonlySet<string> | null): void {
+    this.immediateIds = ids
   }
 
   // ------------------------------------------------------------- Yjs intake
@@ -343,18 +455,81 @@ export class Mirror implements SceneSource {
 
   // ----------------------------------------------------------------- layout
 
+  /**
+   * Layout data source, patched while a drag is live: dragged tops vanish
+   * from their parents' child lists and a phantom slot (sized like the
+   * dragged node) is spliced into the drop candidate — the animated
+   * "insertion gap".
+   */
+  private layoutGetter(): (id: string) => LayoutNodeData | undefined {
+    if (this.dragTops.size === 0) return (id) => this.nodes.get(id)
+    const preview = this.preview
+    const firstTop = this.nodes.get([...this.dragTops][0])
+    const phantom: LayoutNodeData | undefined =
+      preview && firstTop
+        ? {
+            id: PHANTOM_ID,
+            width: firstTop.width,
+            height: firstTop.height,
+            childrenIds: [],
+            collapsed: false,
+            layout: 'auto',
+            mx: 0,
+            my: 0,
+            side: preview.side,
+            dir: null,
+          }
+        : undefined
+    return (id) => {
+      if (id === PHANTOM_ID) return phantom
+      const n = this.nodes.get(id)
+      if (!n) return undefined
+      const isPreviewParent = preview !== null && id === preview.parentId && phantom !== undefined
+      const hasDraggedChild = n.childrenIds.some((c) => this.dragTops.has(c))
+      if (!isPreviewParent && !hasDraggedChild) return n
+      let kids = hasDraggedChild
+        ? n.childrenIds.filter((c) => !this.dragTops.has(c))
+        : [...n.childrenIds]
+      if (isPreviewParent && preview && !n.collapsed) {
+        // preview.index counts the same universe the interaction layer uses:
+        // auto-layout children, side-filtered for both-side roots
+        const universe = this.insertionUniverse(n.id, preview.side, kids)
+        const ref = preview.index < universe.length ? universe[preview.index] : null
+        if (ref) {
+          const at = kids.indexOf(ref)
+          kids = [...kids.slice(0, at), PHANTOM_ID, ...kids.slice(at)]
+        } else {
+          kids = [...kids, PHANTOM_ID]
+        }
+      }
+      return { ...n, childrenIds: kids }
+    }
+  }
+
   /** Re-run layout for the given roots and tween every moved node to its new slot. */
   private relayout(rootIds: Set<string>, enteringIds: Set<string>): void {
     const t0 = performance.now()
+    const get = this.layoutGetter()
+    this.phantomSlot = null
     for (const rootId of rootIds) {
-      const positions = layoutMindmapRoot(rootId, (id) => this.nodes.get(id), this.spacing)
+      const positions = layoutMindmapRoot(rootId, get, this.spacing)
       for (const [id, p] of positions) {
+        if (id === PHANTOM_ID) {
+          this.phantomSlot = { x: p.x, y: p.y }
+          continue
+        }
         const n = this.nodes.get(id)
         if (!n) continue
         const moved = Math.abs(n.x - p.x) > 0.01 || Math.abs(n.y - p.y) > 0.01
         n.x = p.x
         n.y = p.y
-        if (enteringIds.has(id)) {
+        if (this.immediateIds?.has(id)) {
+          this.animator.cancel(id)
+          n.renderX = p.x
+          n.renderY = p.y
+          n.renderAlpha = 1
+          n.renderScale = 1
+        } else if (enteringIds.has(id)) {
           // new node: pop in from the parent's current position
           const parent = n.parentId ? this.nodes.get(n.parentId) : undefined
           n.renderX = parent ? parent.renderX : p.x

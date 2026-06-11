@@ -1,17 +1,25 @@
-import type { Point } from '../types'
+import type { NodeView, Point, Rect, Side } from '../types'
+import { nodeRenderRect, rectsIntersect } from '../types'
 import type { Camera } from './camera'
 import { centerOn, fitBounds, panByScreen, screenToWorld, zoomAtPoint } from './camera'
 import type { Renderer } from './renderer'
 import type { Animator } from './animator'
 import type { BoardActions } from './actions'
 import type { Board } from '../doc/board'
-import { hitTestNode } from './hitTest'
+import type { DragPreview } from '../doc/mirror'
+import { hitTestNode, nearestNode } from './hitTest'
+import { drawNode } from './drawNode'
+import { drawTreeConnector } from './drawConnector'
+import { COLORS } from '../theme'
 import { clearSelection, setSelection, toggleSelected, uiStore } from '../state/store'
 
+const DRAG_THRESHOLD_PX = 4
+const CANDIDATE_RADIUS_PX = 80
+
 /**
- * Explicit interaction state machine (SPEC §9). M2 scope: idle / panning /
- * pressing plus the full keyboard layer (creation, navigation, editing,
- * undo). Drag states land in M3.
+ * Explicit interaction state machine (SPEC §9): idle, panning, marquee,
+ * draggingNodes (ghost + live insertion-gap preview), draggingFreeMove,
+ * spacePan via flag, plus the keyboard layer.
  */
 type InteractionState =
   | { kind: 'idle' }
@@ -20,10 +28,43 @@ type InteractionState =
       pointerId: number
       lastX: number
       lastY: number
-      via: 'space' | 'middle' | 'empty'
-      moved: boolean
+      via: 'space' | 'middle'
     }
-  | { kind: 'pressingNode'; pointerId: number; nodeId: string; startX: number; startY: number }
+  | {
+      kind: 'pressingNode'
+      pointerId: number
+      nodeId: string
+      startX: number
+      startY: number
+      ctrl: boolean
+      alt: boolean
+    }
+  | { kind: 'pressingEmpty'; pointerId: number; startX: number; startY: number; shift: boolean }
+  | {
+      kind: 'marquee'
+      pointerId: number
+      startWorld: Point
+      curWorld: Point
+      base: ReadonlySet<string>
+    }
+  | {
+      kind: 'draggingNodes'
+      pointerId: number
+      topIds: string[]
+      grabWorld: Point
+      dx: number
+      dy: number
+      preview: DragPreview | null
+    }
+  | {
+      kind: 'draggingFreeMove'
+      pointerId: number
+      nodeId: string
+      isRoot: boolean
+      grabWorld: Point
+      start: { mx: number; my: number; layout: 'auto' | 'manual' }
+      last: { mx: number; my: number }
+    }
 
 export interface EngineHost {
   canvas: HTMLCanvasElement
@@ -62,7 +103,6 @@ export class InteractionMachine {
         lastX: pos.x,
         lastY: pos.y,
         via: middle ? 'middle' : 'space',
-        moved: false,
       }
       this.applyCursor()
       return
@@ -80,21 +120,20 @@ export class InteractionMachine {
         nodeId: hitNode.id,
         startX: pos.x,
         startY: pos.y,
+        ctrl: e.ctrlKey || e.metaKey,
+        alt: e.altKey,
       }
       this.repaint()
       return
     }
 
-    // Empty canvas: drag pans (marquee replaces this in M3).
     this.state = {
-      kind: 'panning',
+      kind: 'pressingEmpty',
       pointerId: e.pointerId,
-      lastX: pos.x,
-      lastY: pos.y,
-      via: 'empty',
-      moved: false,
+      startX: pos.x,
+      startY: pos.y,
+      shift: e.shiftKey,
     }
-    this.applyCursor()
   }
 
   onPointerMove(pos: Point, e: PointerEvent): void {
@@ -117,42 +156,95 @@ export class InteractionMachine {
         if (dx === 0 && dy === 0) return
         st.lastX = pos.x
         st.lastY = pos.y
-        st.moved = true
-        // Content follows the cursor: dragging right moves the camera left.
         this.setCamera(panByScreen(this.camera, -dx, -dy))
         return
       }
-      case 'pressingNode':
-        // Node dragging lands in M3; pressing is inert beyond selection.
+      case 'pressingNode': {
+        if (e.pointerId !== st.pointerId) return
+        if (Math.hypot(pos.x - st.startX, pos.y - st.startY) < DRAG_THRESHOLD_PX) return
+        this.startNodeDrag(st, pos)
         return
+      }
+      case 'pressingEmpty': {
+        if (e.pointerId !== st.pointerId) return
+        if (Math.hypot(pos.x - st.startX, pos.y - st.startY) < DRAG_THRESHOLD_PX) return
+        const startWorld = screenToWorld(this.camera, st.startX, st.startY)
+        this.state = {
+          kind: 'marquee',
+          pointerId: st.pointerId,
+          startWorld,
+          curWorld: screenToWorld(this.camera, pos.x, pos.y),
+          base: st.shift ? uiStore.getState().selection : new Set(),
+        }
+        this.applyCursor()
+        this.updateMarquee()
+        return
+      }
+      case 'marquee': {
+        if (e.pointerId !== st.pointerId) return
+        st.curWorld = screenToWorld(this.camera, pos.x, pos.y)
+        this.updateMarquee()
+        return
+      }
+      case 'draggingNodes': {
+        if (e.pointerId !== st.pointerId) return
+        const world = screenToWorld(this.camera, pos.x, pos.y)
+        st.dx = world.x - st.grabWorld.x
+        st.dy = world.y - st.grabWorld.y
+        st.preview = this.findDropPreview(world, st.topIds)
+        this.scene.setDragPreview(st.preview)
+        this.repaint()
+        return
+      }
+      case 'draggingFreeMove': {
+        if (e.pointerId !== st.pointerId) return
+        const world = screenToWorld(this.camera, pos.x, pos.y)
+        const mx = st.start.mx + (world.x - st.grabWorld.x)
+        const my = st.start.my + (world.y - st.grabWorld.y)
+        st.last = { mx, my }
+        this.host.actions.freeMoveLive(st.nodeId, mx, my, st.isRoot)
+        return
+      }
     }
   }
 
   onPointerUp(pos: Point, e: PointerEvent): void {
     const st = this.state
-    if (st.kind === 'panning' && e.pointerId === st.pointerId) {
-      const wasClick = !st.moved && st.via === 'empty'
-      this.state = { kind: 'idle' }
-      if (wasClick) clearSelection()
-      this.applyCursor()
-      this.repaint()
-      return
-    }
-    if (st.kind === 'pressingNode' && e.pointerId === st.pointerId) {
-      this.state = { kind: 'idle' }
-      this.applyCursor()
-      return
+    if ('pointerId' in st && st.pointerId !== e.pointerId) return
+    switch (st.kind) {
+      case 'panning':
+        this.state = { kind: 'idle' }
+        break
+      case 'pressingNode':
+        this.state = { kind: 'idle' }
+        break
+      case 'pressingEmpty':
+        this.state = { kind: 'idle' }
+        clearSelection()
+        break
+      case 'marquee':
+        this.state = { kind: 'idle' }
+        break
+      case 'draggingNodes':
+        this.finishNodeDrag(st, false)
+        break
+      case 'draggingFreeMove':
+        this.scene.setImmediate(null)
+        this.host.actions.freeMoveCommit(st.nodeId, st.start, st.last, st.isRoot)
+        this.state = { kind: 'idle' }
+        break
+      default:
+        return
     }
     void pos
+    this.applyCursor()
+    this.repaint()
   }
 
   onPointerCancel(e: PointerEvent): void {
     const st = this.state
-    if (st.kind !== 'idle' && 'pointerId' in st && st.pointerId === e.pointerId) {
-      this.state = { kind: 'idle' }
-      this.applyCursor()
-      this.repaint()
-    }
+    if (st.kind === 'idle' || !('pointerId' in st) || st.pointerId !== e.pointerId) return
+    this.abortGesture()
   }
 
   onDoubleClick(pos: Point, e: MouseEvent): void {
@@ -166,6 +258,267 @@ export class InteractionMachine {
       // Double-click on empty canvas: new floating root, edit immediately.
       this.host.actions.addRootAt(world.x, world.y)
     }
+  }
+
+  // --------------------------------------------------------- node drags
+
+  private startNodeDrag(st: Extract<InteractionState, { kind: 'pressingNode' }>, pos: Point): void {
+    const grabWorld = screenToWorld(this.camera, st.startX, st.startY)
+    const node = this.scene.nodes.get(st.nodeId)
+    if (!node) {
+      this.state = { kind: 'idle' }
+      return
+    }
+
+    // Ctrl/Cmd+drag → free-move (manual offset; roots just move).
+    if (st.ctrl || node.parentId === null) {
+      const isRoot = node.parentId === null
+      const subtree = new Set<string>()
+      const collect = (id: string): void => {
+        subtree.add(id)
+        const n = this.scene.nodes.get(id)
+        if (n) for (const c of n.childrenIds) collect(c)
+      }
+      collect(node.id)
+      this.scene.setImmediate(subtree)
+      const start = isRoot
+        ? { mx: node.mx, my: node.my, layout: node.layout }
+        : node.layout === 'manual'
+          ? { mx: node.mx, my: node.my, layout: 'manual' as const }
+          : {
+              // entering manual mode: current offset from the parent's slot
+              mx: node.x - (this.scene.nodes.get(node.parentId!)?.x ?? 0),
+              my: node.y - (this.scene.nodes.get(node.parentId!)?.y ?? 0),
+              layout: 'auto' as const,
+            }
+      this.state = {
+        kind: 'draggingFreeMove',
+        pointerId: st.pointerId,
+        nodeId: node.id,
+        isRoot,
+        grabWorld,
+        start: { mx: start.mx, my: start.my, layout: start.layout },
+        last: { mx: start.mx, my: start.my },
+      }
+      this.applyCursor()
+      this.onPointerMove(pos, { pointerId: st.pointerId } as PointerEvent)
+      return
+    }
+
+    // Alt+drag → duplicate the subtree, drag the copy.
+    let topIds = this.dragTopsFor(st.nodeId)
+    if (st.alt) topIds = this.host.actions.duplicateForDrag(topIds)
+    if (topIds.length === 0) {
+      this.state = { kind: 'idle' }
+      return
+    }
+
+    this.scene.beginDrag(topIds)
+    this.state = {
+      kind: 'draggingNodes',
+      pointerId: st.pointerId,
+      topIds,
+      grabWorld,
+      dx: 0,
+      dy: 0,
+      preview: null,
+    }
+    this.applyCursor()
+    this.repaint()
+  }
+
+  /** Selected tops if the pressed node is part of the selection, else just it. */
+  private dragTopsFor(nodeId: string): string[] {
+    const selection = uiStore.getState().selection
+    const tops = selection.has(nodeId) ? this.host.actions.selectionTops() : [nodeId]
+    return tops.filter((id) => {
+      const n = this.scene.nodes.get(id)
+      return n && n.parentId !== null // roots use the free-move path
+    })
+  }
+
+  private finishNodeDrag(
+    st: Extract<InteractionState, { kind: 'draggingNodes' }>,
+    cancelled: boolean,
+  ): void {
+    // Park render positions at the ghost so the reflow tweens from there.
+    for (const id of this.scene.draggingIds) {
+      const n = this.scene.nodes.get(id)
+      if (!n) continue
+      n.renderX += st.dx
+      n.renderY += st.dy
+    }
+    const preview = cancelled ? null : st.preview
+    this.scene.endDrag()
+    if (preview) {
+      this.host.actions.dropSubtrees(st.topIds, preview.parentId, preview.index, preview.side)
+    }
+    this.state = { kind: 'idle' }
+  }
+
+  /**
+   * Drop candidate under the pointer (SPEC §9): the node we'd become a child
+   * of, with the insertion index among its children. Hovering a node targets
+   * it directly; hovering its sibling column targets the parent; nothing
+   * within range → no preview (revert on drop).
+   */
+  private findDropPreview(world: Point, topIds: string[]): DragPreview | null {
+    const exclude = this.scene.draggingIds
+    const zoom = this.camera.zoom
+    const direct = hitTestNode(this.scene, world, 2, exclude)
+    const near = direct ?? nearestNode(this.scene, world, CANDIDATE_RADIUS_PX / zoom, exclude)
+    if (!near) return null
+
+    let parent: NodeView | null
+    if (direct || near.parentId === null) {
+      parent = near
+    } else {
+      // beyond the node's outward edge → into its children; otherwise sibling
+      const rootId = this.scene.rootOf(near.id)
+      const root = this.scene.nodes.get(rootId)
+      const down = root?.dir === 'down'
+      const r = nodeRenderRect(near)
+      if (down) {
+        parent = world.y > r.y + r.h ? near : (this.scene.nodes.get(near.parentId) ?? near)
+      } else {
+        const onLeft = near.renderX < (root?.renderX ?? 0)
+        const outward = onLeft ? world.x < r.x : world.x > r.x + r.w
+        parent = outward ? near : (this.scene.nodes.get(near.parentId) ?? near)
+      }
+    }
+    if (!parent || exclude.has(parent.id)) return null
+    // dropping a node onto its own current parent at the same spot is fine —
+    // the commit path turns it into a reorder
+
+    const isBothRoot = parent.parentId === null && (parent.dir ?? 'both') === 'both'
+    const side: Side | null = isBothRoot
+      ? world.x >= parent.renderX
+        ? 'right'
+        : 'left'
+      : parent.parentId === null
+        ? null
+        : (this.scene.nodes.get(this.scene.rootOf(parent.id))?.dir ?? 'both') === 'both'
+          ? this.sideOfBranch(parent.id)
+          : null
+
+    // Insertion index: count universe children whose cross-coordinate
+    // precedes the pointer.
+    const universe = this.scene
+      .insertionUniverse(parent.id, side)
+      .filter((id) => !topIds.includes(id))
+    const rootForAxis = this.scene.nodes.get(this.scene.rootOf(parent.id))
+    const downAxis = rootForAxis?.dir === 'down'
+    let index = 0
+    for (const cid of universe) {
+      const c = this.scene.nodes.get(cid)
+      if (!c) continue
+      const coord = downAxis ? c.x : c.y
+      const pointerCoord = downAxis ? world.x : world.y
+      if (coord < pointerCoord) index++
+    }
+    return { parentId: parent.id, index, side }
+  }
+
+  private sideOfBranch(id: string): Side {
+    let cur = this.scene.nodes.get(id)
+    while (cur && cur.parentId !== null) {
+      const p = this.scene.nodes.get(cur.parentId)
+      if (!p) break
+      if (p.parentId === null) return cur.side ?? 'right'
+      cur = p
+    }
+    return 'right'
+  }
+
+  // -------------------------------------------------------------- marquee
+
+  private updateMarquee(): void {
+    const st = this.state
+    if (st.kind !== 'marquee') return
+    const rect = normRect(st.startWorld, st.curWorld)
+    const candidates = this.scene.spatial.queryRect(rect)
+    const picked = new Set(st.base)
+    for (const id of candidates) {
+      const n = this.scene.nodes.get(id)
+      if (n && n.visible && rectsIntersect(nodeRenderRect(n), rect)) picked.add(id)
+    }
+    setSelection(picked)
+    this.repaint()
+  }
+
+  // ------------------------------------------------------------- overlay
+
+  /** Painted by the renderer after the scene (world-space ctx). */
+  paintOverlay(ctx: CanvasRenderingContext2D, cam: Camera): void {
+    const st = this.state
+    if (st.kind === 'marquee') {
+      const r = normRect(st.startWorld, st.curWorld)
+      ctx.save()
+      ctx.fillStyle = COLORS.accent
+      ctx.globalAlpha = 0.08
+      ctx.fillRect(r.x, r.y, r.w, r.h)
+      ctx.globalAlpha = 0.9
+      ctx.strokeStyle = COLORS.accent
+      ctx.lineWidth = 1.5 / cam.zoom
+      ctx.strokeRect(r.x, r.y, r.w, r.h)
+      ctx.restore()
+      return
+    }
+    if (st.kind !== 'draggingNodes') return
+
+    // Candidate parent highlight.
+    if (st.preview) {
+      const parent = this.scene.nodes.get(st.preview.parentId)
+      if (parent) {
+        const r = nodeRenderRect(parent)
+        const pad = 4 / cam.zoom
+        ctx.save()
+        ctx.strokeStyle = COLORS.accent
+        ctx.lineWidth = 2 / cam.zoom
+        ctx.globalAlpha = 0.9
+        ctx.beginPath()
+        ctx.roundRect(r.x - pad, r.y - pad, r.w + 2 * pad, r.h + 2 * pad, 8)
+        ctx.stroke()
+        ctx.restore()
+      }
+      // Placeholder outline at the phantom slot.
+      const slot = this.scene.phantomSlot
+      const top = this.scene.nodes.get(st.topIds[0])
+      if (slot && top) {
+        ctx.save()
+        ctx.strokeStyle = COLORS.accent
+        ctx.globalAlpha = 0.45
+        ctx.lineWidth = 1.5 / cam.zoom
+        ctx.setLineDash([6 / cam.zoom, 4 / cam.zoom])
+        ctx.beginPath()
+        ctx.roundRect(slot.x - top.width / 2, slot.y - top.height / 2, top.width, top.height, 8)
+        ctx.stroke()
+        ctx.restore()
+      }
+    }
+
+    // Ghost subtree at 60% opacity following the cursor.
+    ctx.save()
+    ctx.translate(st.dx, st.dy)
+    const dragged = this.scene.draggingIds
+    for (const id of this.scene.paintList) {
+      if (!dragged.has(id)) continue
+      const n = this.scene.nodes.get(id)
+      if (!n || !n.visible) continue
+      if (n.parentId && dragged.has(n.parentId)) {
+        const parent = this.scene.nodes.get(n.parentId)
+        if (parent) drawTreeConnector(ctx, parent, n, 'h', 'curved', 0.6)
+      }
+      drawNode(ctx, n, {
+        zoom: cam.zoom,
+        selected: false,
+        hovered: false,
+        editing: false,
+        outward: 'right',
+        alpha: 0.6,
+      })
+    }
+    ctx.restore()
   }
 
   // -------------------------------------------------------------- wheel
@@ -188,6 +541,16 @@ export class InteractionMachine {
     const { actions } = this.host
     const selection = uiStore.getState().selection
     const selectedId = selection.size > 0 ? [...selection][selection.size - 1] : null
+
+    if (e.key === 'Escape') {
+      if (this.state.kind !== 'idle') {
+        this.abortGesture()
+      } else {
+        clearSelection()
+        this.repaint()
+      }
+      return
+    }
 
     if (e.code === 'Space' && !e.repeat) {
       uiStore.setState({ spaceDown: true })
@@ -227,9 +590,30 @@ export class InteractionMachine {
       e.preventDefault()
       return
     }
-    if (e.key === 'Escape') {
-      clearSelection()
-      this.repaint()
+    if (mod && e.key === 'c') {
+      actions.copySelection()
+      e.preventDefault()
+      return
+    }
+    if (mod && e.key === 'x') {
+      actions.cutSelection()
+      e.preventDefault()
+      return
+    }
+    if (mod && e.key === 'v') {
+      const { w, h } = this.host.renderer.viewportSize
+      actions.paste(screenToWorld(this.camera, w / 2, h / 2))
+      e.preventDefault()
+      return
+    }
+    if (mod && !e.shiftKey && e.key === 'd') {
+      actions.duplicateSelection()
+      e.preventDefault()
+      return
+    }
+    if (mod && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      actions.reorderSelected(e.key === 'ArrowUp' ? -1 : 1)
+      e.preventDefault()
       return
     }
 
@@ -292,8 +676,26 @@ export class InteractionMachine {
 
   onWindowBlur(): void {
     uiStore.setState({ spaceDown: false })
-    if (this.state.kind === 'panning') this.state = { kind: 'idle' }
+    if (this.state.kind !== 'idle') this.abortGesture()
     this.applyCursor()
+  }
+
+  /** Cancel any in-flight gesture, reverting drag effects (SPEC §9 Esc). */
+  private abortGesture(): void {
+    const st = this.state
+    if (st.kind === 'draggingNodes') {
+      this.finishNodeDrag(st, true)
+    } else if (st.kind === 'draggingFreeMove') {
+      this.scene.setImmediate(null)
+      // restore the pre-drag position (ephemeral; nothing tracked yet)
+      this.host.actions.freeMoveLive(st.nodeId, st.start.mx, st.start.my, st.isRoot)
+      if (!st.isRoot) {
+        this.host.actions.freeMoveCommit(st.nodeId, st.start, st.start, st.isRoot)
+      }
+    }
+    this.state = { kind: 'idle' }
+    this.applyCursor()
+    this.repaint()
   }
 
   // ------------------------------------------------------------ actions
@@ -331,10 +733,19 @@ export class InteractionMachine {
     const st = this.state
     let cursor = 'default'
     if (st.kind === 'panning') cursor = 'grabbing'
+    else if (st.kind === 'draggingNodes' || st.kind === 'draggingFreeMove') cursor = 'grabbing'
+    else if (st.kind === 'marquee') cursor = 'crosshair'
     else if (uiStore.getState().spaceDown) cursor = 'grab'
     this.host.canvas.style.cursor = cursor
   }
 }
+
+const normRect = (a: Point, b: Point): Rect => ({
+  x: Math.min(a.x, b.x),
+  y: Math.min(a.y, b.y),
+  w: Math.abs(a.x - b.x),
+  h: Math.abs(a.y - b.y),
+})
 
 /** Ctrl/Cmd+wheel (incl. trackpad pinch) and discrete mouse-wheel ticks zoom; everything else pans. */
 function isZoomGesture(e: WheelEvent): boolean {

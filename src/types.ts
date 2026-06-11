@@ -95,6 +95,8 @@ export interface SceneSource {
   rootIds: readonly string[]
   links: readonly LinkView[]
   spatial: SpatialQuery
+  /** nodes mid-drag: the interaction layer paints them as a ghost instead */
+  draggingIds: ReadonlySet<string>
   /** deleted nodes still fading out; painted after the main pass */
   exiting: readonly NodeView[]
   /** look up a live node, falling back to exiting ones (for edge painting) */

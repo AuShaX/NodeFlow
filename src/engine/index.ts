@@ -41,6 +41,7 @@ export function createEngine(canvas: HTMLCanvasElement, doc: Y.Doc): Engine {
   })
   const actions = new BoardActions(board)
   const machine = new InteractionMachine({ canvas, board, renderer, animator, actions })
+  renderer.overlayPainter = (ctx, cam) => machine.paintOverlay(ctx, cam)
   const detachInput = attachInput(canvas, machine)
 
   // Repaint on any UI-store change (selection from chrome, HUD toggle, ...).

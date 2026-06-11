@@ -173,11 +173,14 @@ export class Renderer {
       return
     }
 
+    const dragging = this.scene.draggingIds
+
     // 1) Tree connectors (parents before children is irrelevant here, but we
     //    reuse the paint list to visit every parent→child edge once).
     for (const id of paintList) {
       const child = nodes.get(id)
       if (!child || (!child.visible && !child.vanishing) || child.parentId === null) continue
+      if (dragging.has(id)) continue
       const parent = nodes.get(child.parentId)
       if (!parent) continue
       if (!rectsIntersect(connectorBounds(parent, child), cullView)) continue
@@ -195,7 +198,7 @@ export class Renderer {
     // 3) Nodes, parents before children.
     for (const id of paintList) {
       const n = nodes.get(id)
-      if (!n || (!n.visible && !n.vanishing)) continue
+      if (!n || (!n.visible && !n.vanishing) || dragging.has(id)) continue
       if (!visibleIds.has(id) && !rectsIntersect(nodeRect(n), cullView)) continue
       drawNode(ctx, n, {
         zoom,

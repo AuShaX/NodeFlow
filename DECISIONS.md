@@ -61,3 +61,28 @@ Running log of spec deviations and judgment calls, newest last. (SPEC §3.)
 - **The mirror rebuilds derived data (children/depth/colors/counts) globally per change
   batch** rather than per-subtree: it's a linear pass over plain objects (sub-ms at 1k
   nodes); layout — the expensive part — stays scoped to dirty roots per SPEC §6.
+
+## M3 — Drag interactions
+
+- **Drop-candidate model** (matches Miro's documented behavior — see ROADMAP.md research
+  notes): hovering a node directly targets it (drop = become its child); hovering near a
+  node but not past its outward edge targets the node's _parent_ (drop = become a sibling,
+  with the insertion index from the pointer's cross-axis position). Nothing within 80
+  screen px → no preview, drop reverts animated.
+- **The insertion gap is real layout, not a drawing trick:** during a drag the mirror lays
+  out with the dragged subtree removed and a phantom slot (sized like the dragged node)
+  spliced into the candidate — siblings shift apart via the normal 180 ms tween machinery.
+  A dashed outline marks the phantom slot.
+- **Insertion indexes count a defined universe** — auto-layout, non-dragged children,
+  side-filtered for both-sides roots — shared verbatim between preview layout and the drop
+  commit so what you see is exactly what commits.
+- **Plain-dragging a root live-moves the whole tree** (no ghost, no reparent targets) per
+  SPEC §9's parenthetical; merging two maps by dropping a root onto a node is deferred.
+- **Free-move commits restore-then-write** (like text edits) so the tracked transaction
+  captures pre-drag → final; mid-drag writes are ephemeral. Undo of a first-time free-move
+  returns the node to `layout:'auto'`.
+- **Alt+drag duplicates before dragging** (one tracked step), then drags the copies.
+- **Clipboard is app-internal for v1** (module state, not the system clipboard); paste
+  targets the selected node as parent or pastes floating roots at the viewport center.
+- **Left-drag on empty canvas is now marquee** (M1's temporary pan behavior removed);
+  Shift+marquee adds to the selection.

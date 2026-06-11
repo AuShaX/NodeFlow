@@ -98,8 +98,9 @@ export function drawTreeConnector(
   child: NodeView,
   axis: ConnectorAxis,
   style: ConnectorStyle,
+  alphaMul = 1,
 ): void {
-  const alpha = child.renderAlpha * parent.renderAlpha
+  const alpha = child.renderAlpha * parent.renderAlpha * alphaMul
   if (alpha <= 0.01) return
   const g = connectorGeom(parent, child, axis)
   ctx.save()

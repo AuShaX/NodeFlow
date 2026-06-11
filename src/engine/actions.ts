@@ -6,9 +6,20 @@ import {
   deleteSubtree,
   ephemeralOrigin,
   localOrigin,
+  moveNode,
   setCollapsed,
+  setManualOffset,
   setNodeText,
+  setRootPosition,
 } from '../doc/schema'
+import {
+  clipboardHasContent,
+  clipboardRead,
+  clipboardWrite,
+  duplicateSubtree,
+  materializeSubtree,
+  serializeSubtree,
+} from '../doc/clipboard'
 import { pickBalancedSide } from '../layout/mindmapLayout'
 import { setSelection, uiStore } from '../state/store'
 
@@ -182,6 +193,161 @@ export class BoardActions {
   cancelEditKeepText(id: string, text: string): void {
     // Esc commits per SPEC §9 ("Esc commits and exits")
     this.commitEdit(id, text)
+  }
+
+  // ------------------------------------------------------ drag & reorder
+
+  /** Selected ids reduced to topmost subtree roots (no node with a selected ancestor). */
+  selectionTops(): string[] {
+    const sel = [...uiStore.getState().selection]
+    const selSet = new Set(sel)
+    return sel.filter((id) => {
+      let cur = this.mirror.nodes.get(id)
+      while (cur && cur.parentId !== null) {
+        if (selSet.has(cur.parentId)) return false
+        cur = this.mirror.nodes.get(cur.parentId)
+      }
+      return true
+    })
+  }
+
+  /**
+   * Commit a drag-drop: reparent + fractional-index insert, one transaction.
+   * `index` refers to the mirror's insertion universe for (parentId, side).
+   */
+  dropSubtrees(topIds: string[], parentId: string, index: number, side: Side | null): void {
+    const universe = this.mirror
+      .insertionUniverse(parentId, side)
+      .filter((id) => !topIds.includes(id))
+    const ref = index < universe.length ? universe[index] : null
+    this.board.bd.doc.transact(() => {
+      let prev: string | null = null
+      for (const top of topIds) {
+        const pos = prev ? { afterId: prev } : ref ? { beforeId: ref } : undefined
+        moveNode(this.board.bd, top, parentId, pos, side)
+        prev = top
+      }
+    }, localOrigin)
+  }
+
+  /** Live position writes during free-move / root drags (untracked). */
+  freeMoveLive(id: string, mx: number, my: number, isRoot: boolean): void {
+    if (isRoot) setRootPosition(this.board.bd, id, mx, my, ephemeralOrigin)
+    else setManualOffset(this.board.bd, id, mx, my, ephemeralOrigin)
+  }
+
+  /** Final free-move commit: restore start ephemerally so one drag = one undo step. */
+  freeMoveCommit(
+    id: string,
+    start: { mx: number; my: number; layout: 'auto' | 'manual' },
+    end: { mx: number; my: number },
+    isRoot: boolean,
+  ): void {
+    if (Math.abs(start.mx - end.mx) < 0.01 && Math.abs(start.my - end.my) < 0.01) {
+      // no net movement: restore as it was
+      if (isRoot) setRootPosition(this.board.bd, id, start.mx, start.my, ephemeralOrigin)
+      else if (start.layout === 'manual')
+        setManualOffset(this.board.bd, id, start.mx, start.my, ephemeralOrigin)
+      return
+    }
+    if (isRoot) {
+      setRootPosition(this.board.bd, id, start.mx, start.my, ephemeralOrigin)
+      setRootPosition(this.board.bd, id, end.mx, end.my, localOrigin)
+    } else {
+      // restore the pre-drag state (incl. layout mode), then commit tracked
+      this.board.bd.doc.transact(() => {
+        const m = this.board.bd.nodes.get(id)
+        if (!m) return
+        m.set('layout', start.layout)
+        m.set('mx', start.mx)
+        m.set('my', start.my)
+      }, ephemeralOrigin)
+      setManualOffset(this.board.bd, id, end.mx, end.my, localOrigin)
+    }
+  }
+
+  /** Duplicate subtrees for Alt+drag (single undo step); returns new top ids. */
+  duplicateForDrag(topIds: string[]): string[] {
+    const out: string[] = []
+    this.board.bd.doc.transact(() => {
+      for (const id of topIds) {
+        const copy = duplicateSubtree(this.board.bd, this.mirror, id)
+        if (copy) out.push(copy)
+      }
+    }, localOrigin)
+    setSelection(out)
+    return out
+  }
+
+  /** Cmd/Ctrl+↑/↓ — swap with the previous/next sibling on the same side. */
+  reorderSelected(delta: -1 | 1): void {
+    const sel = [...uiStore.getState().selection]
+    if (sel.length !== 1) return
+    const node = this.mirror.nodes.get(sel[0])
+    if (!node || node.parentId === null) return
+    const parent = this.mirror.nodes.get(node.parentId)
+    if (!parent) return
+    const universe = this.mirror.insertionUniverse(node.parentId, node.side)
+    const i = universe.indexOf(node.id)
+    if (i < 0) return
+    const j = i + delta
+    if (j < 0 || j >= universe.length) return
+    const pos = delta === -1 ? { beforeId: universe[j] } : { afterId: universe[j] }
+    moveNode(this.board.bd, node.id, node.parentId, pos, node.side)
+  }
+
+  // ----------------------------------------------------- clipboard actions
+
+  copySelection(): void {
+    const tops = this.selectionTops()
+    const specs = tops
+      .map((id) => serializeSubtree(this.mirror, id))
+      .filter((s): s is NonNullable<typeof s> => s !== null)
+    if (specs.length > 0) clipboardWrite(specs)
+  }
+
+  cutSelection(): void {
+    this.copySelection()
+    this.deleteSelection()
+  }
+
+  /** Paste as children of the selected node, or as floating roots at a point. */
+  paste(at?: { x: number; y: number }): void {
+    if (!clipboardHasContent()) return
+    const specs = clipboardRead()
+    const sel = [...uiStore.getState().selection]
+    const target = sel.length > 0 ? (this.mirror.nodes.get(sel[sel.length - 1]) ?? null) : null
+    const newIds: string[] = []
+    this.board.bd.doc.transact(() => {
+      specs.forEach((spec, i) => {
+        if (target) {
+          newIds.push(materializeSubtree(this.board.bd, target.id, spec))
+        } else {
+          const base = at ?? { x: 0, y: 0 }
+          newIds.push(
+            materializeSubtree(this.board.bd, null, spec, undefined, {
+              x: base.x + i * 40,
+              y: base.y + i * 40,
+            }),
+          )
+        }
+      })
+    }, localOrigin)
+    if (newIds.length > 0) setSelection(newIds)
+  }
+
+  /** Cmd/Ctrl+D — duplicate each selected subtree as its next sibling. */
+  duplicateSelection(): void {
+    const tops = this.selectionTops()
+    if (tops.length === 0) return
+    const out: string[] = []
+    this.board.bd.doc.transact(() => {
+      for (const id of tops) {
+        const copy = duplicateSubtree(this.board.bd, this.mirror, id)
+        if (copy) out.push(copy)
+      }
+    }, localOrigin)
+    if (out.length > 0) setSelection(out)
   }
 
   // ---------------------------------------------------------- navigation

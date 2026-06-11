@@ -35,8 +35,10 @@ export function createEngine(canvas: HTMLCanvasElement, doc: Y.Doc): Engine {
     return {
       camera: s.camera,
       selection: s.selection,
+      linkSelection: s.linkSelection,
       hover: s.hover,
       editingId: s.editing?.id ?? null,
+      editingLinkId: s.editingLinkId,
     }
   })
   const actions = new BoardActions(board)

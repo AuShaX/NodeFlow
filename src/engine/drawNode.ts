@@ -1,8 +1,8 @@
-import type { NodeView } from '../types'
+import type { NodeView, OutwardSide, Point } from '../types'
 import { COLORS, FONT_STACK } from '../theme'
 import { fontFor, LINE_HEIGHTS } from './textMeasure'
 
-export type OutwardSide = 'left' | 'right' | 'down'
+export type { OutwardSide }
 
 export interface NodeDrawState {
   zoom: number
@@ -121,11 +121,109 @@ export function drawNode(ctx: CanvasRenderingContext2D, n: NodeView, s: NodeDraw
 }
 
 const BADGE_R = 9
+const AFFORDANCE_R = 8
 
 export function collapsedBadgeCenter(n: NodeView, outward: OutwardSide): { x: number; y: number } {
   if (outward === 'left') return { x: n.renderX - n.width / 2 - BADGE_R - 4, y: n.renderY }
   if (outward === 'down') return { x: n.renderX, y: n.renderY + n.height / 2 + BADGE_R + 4 }
   return { x: n.renderX + n.width / 2 + BADGE_R + 4, y: n.renderY }
+}
+
+/** Hover "–" (collapse) sits where the badge appears when collapsed. */
+export const minusCenter = collapsedBadgeCenter
+
+/** Hover "+" (add child): outward edge, past the minus when one is shown. */
+export function plusCenter(n: NodeView, outward: OutwardSide, pastMinus: boolean): Point {
+  const off = BADGE_R + 4 + (pastMinus ? 2 * AFFORDANCE_R + 6 : 0)
+  if (outward === 'left') return { x: n.renderX - n.width / 2 - off, y: n.renderY }
+  if (outward === 'down') return { x: n.renderX, y: n.renderY + n.height / 2 + off }
+  return { x: n.renderX + n.width / 2 + off, y: n.renderY }
+}
+
+/** Cross-link drag handle: top-center edge dot. */
+export function linkDotCenter(n: NodeView): Point {
+  return { x: n.renderX, y: n.renderY - n.height / 2 }
+}
+
+export type Affordance = 'badge' | 'minus' | 'plus' | 'linkdot'
+
+/**
+ * Which interactive affordance (if any) a world point hits on this node.
+ * Single source of truth shared by painting and the interaction machine.
+ * `active` = the node is hovered or selected (plus/minus/dot only show then);
+ * the collapsed badge is always live.
+ */
+export function affordanceAt(
+  n: NodeView,
+  outward: OutwardSide,
+  pt: Point,
+  active: boolean,
+): Affordance | null {
+  const slop = 3
+  const within = (c: Point, r: number) => Math.hypot(pt.x - c.x, pt.y - c.y) <= r + slop
+  if (n.collapsed && n.subtreeCount > 0) {
+    if (within(collapsedBadgeCenter(n, outward), BADGE_R)) return 'badge'
+  }
+  if (!active) return null
+  if (within(linkDotCenter(n), 5)) return 'linkdot'
+  const hasMinus = !n.collapsed && n.childrenIds.length > 0
+  if (hasMinus && within(minusCenter(n, outward), AFFORDANCE_R)) return 'minus'
+  if (within(plusCenter(n, outward, hasMinus), AFFORDANCE_R)) return 'plus'
+  return null
+}
+
+/** Paint hover/selection affordances (+ / – / link dot). World-space ctx. */
+export function drawAffordances(
+  ctx: CanvasRenderingContext2D,
+  n: NodeView,
+  outward: OutwardSide,
+): void {
+  const hasMinus = !n.collapsed && n.childrenIds.length > 0
+  ctx.save()
+  ctx.globalAlpha = n.renderAlpha
+
+  const circle = (c: Point, r: number) => {
+    ctx.beginPath()
+    ctx.arc(c.x, c.y, r, 0, Math.PI * 2)
+    ctx.fillStyle = COLORS.surface
+    ctx.fill()
+    ctx.strokeStyle = COLORS.accent
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+  }
+  const glyph = (c: Point, plus: boolean) => {
+    ctx.strokeStyle = COLORS.accent
+    ctx.lineWidth = 1.6
+    ctx.beginPath()
+    ctx.moveTo(c.x - 4, c.y)
+    ctx.lineTo(c.x + 4, c.y)
+    if (plus) {
+      ctx.moveTo(c.x, c.y - 4)
+      ctx.lineTo(c.x, c.y + 4)
+    }
+    ctx.stroke()
+  }
+
+  if (hasMinus) {
+    const mc = minusCenter(n, outward)
+    circle(mc, AFFORDANCE_R)
+    glyph(mc, false)
+  }
+  if (!n.collapsed) {
+    const pc = plusCenter(n, outward, hasMinus)
+    circle(pc, AFFORDANCE_R)
+    glyph(pc, true)
+  }
+  // link dot
+  const dot = linkDotCenter(n)
+  ctx.beginPath()
+  ctx.arc(dot.x, dot.y, 4, 0, Math.PI * 2)
+  ctx.fillStyle = COLORS.accent
+  ctx.fill()
+  ctx.strokeStyle = COLORS.surface
+  ctx.lineWidth = 1.5
+  ctx.stroke()
+  ctx.restore()
 }
 
 function drawCollapsedBadge(

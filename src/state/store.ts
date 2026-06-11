@@ -18,8 +18,12 @@ export interface EditingState {
 export interface UIState {
   camera: Camera
   selection: ReadonlySet<string>
+  /** selected cross-link (mutually exclusive with node selection) */
+  linkSelection: string | null
   hover: string | null
   editing: EditingState | null
+  /** cross-link whose label is being edited inline */
+  editingLinkId: string | null
   tool: Tool
   spaceDown: boolean
   hudVisible: boolean
@@ -28,8 +32,10 @@ export interface UIState {
 export const uiStore = createStore<UIState>()(() => ({
   camera: { x: 0, y: 0, zoom: 1 },
   selection: new Set<string>(),
+  linkSelection: null,
   hover: null,
   editing: null,
+  editingLinkId: null,
   tool: 'select',
   spaceDown: false,
   hudVisible: false,
@@ -42,16 +48,23 @@ export function useUI<T>(selector: (s: UIState) => T): T {
 export const setCamera = (camera: Camera): void => uiStore.setState({ camera })
 
 export const setSelection = (ids: Iterable<string>): void => {
-  uiStore.setState({ selection: new Set(ids) })
+  uiStore.setState({ selection: new Set(ids), linkSelection: null })
 }
 
 export const clearSelection = (): void => {
-  if (uiStore.getState().selection.size > 0) uiStore.setState({ selection: new Set() })
+  const s = uiStore.getState()
+  if (s.selection.size > 0 || s.linkSelection !== null) {
+    uiStore.setState({ selection: new Set(), linkSelection: null })
+  }
 }
 
 export const toggleSelected = (id: string): void => {
   const next = new Set(uiStore.getState().selection)
   if (next.has(id)) next.delete(id)
   else next.add(id)
-  uiStore.setState({ selection: next })
+  uiStore.setState({ selection: next, linkSelection: null })
+}
+
+export const setLinkSelection = (id: string | null): void => {
+  uiStore.setState({ linkSelection: id, selection: new Set() })
 }

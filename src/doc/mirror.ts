@@ -1,5 +1,5 @@
 import * as Y from 'yjs'
-import type { LinkView, NodeView, Rect, SceneSource, Side } from '../types'
+import type { LinkView, NodeView, OutwardSide, Rect, SceneSource, Side } from '../types'
 import { nodeLayoutRect, rectUnion } from '../types'
 import { SpatialIndex } from '../engine/spatialIndex'
 import { measureNode } from '../engine/textMeasure'
@@ -109,6 +109,18 @@ export class Mirror implements SceneSource {
       cur = p
     }
     return cur?.id ?? id
+  }
+
+  /** Which way a node's children grow — where badges and affordances sit. */
+  outwardSide(id: string): OutwardSide {
+    const n = this.getAnyNode(id)
+    if (!n) return 'right'
+    const root = this.nodes.get(this.rootOf(id))
+    if (root?.dir === 'down') return 'down'
+    if (n.parentId === null) return 'right'
+    const parent = this.getAnyNode(n.parentId)
+    if (parent && n.renderX < parent.renderX) return 'left'
+    return 'right'
   }
 
   /** Visible-subtree cross-axis extent, used for side auto-balancing. */

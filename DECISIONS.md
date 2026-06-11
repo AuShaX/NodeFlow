@@ -86,3 +86,24 @@ Running log of spec deviations and judgment calls, newest last. (SPEC §3.)
   targets the selected node as parent or pastes floating roots at the viewport center.
 - **Left-drag on empty canvas is now marquee** (M1's temporary pan behavior removed);
   Shift+marquee adds to the selection.
+
+## M4 — Connectors & structure
+
+- **Affordances follow Miro's verified pattern** (see ROADMAP.md research log): hover/select
+  shows "–" (collapse) and "+" (add child, = Tab) on the outward edge; collapsed nodes show
+  the descendant-count badge in the – slot and clicking it expands. One geometry function
+  (`affordanceAt`) is shared by painting and hit-testing.
+- **The cross-link drag handle is a single dot on the top edge** — the outward edge is
+  already occupied by +/– and the badge. Drop on a node creates the link (arrow at end,
+  solid); drop on empty cancels.
+- **Cross-links anchor on the box edge along the center-to-center ray** with control points
+  along that edge's outward normal (`max(24, dist·0.35)` reach) — close enough to "nearest
+  edges" §7 while staying smooth at every relative position.
+- **Cross-links are painted in the muted gray**, not branch colors, so structure edges stay
+  the loud thing; selection turns them accent. Labels sit on a white pill at t=0.5.
+- **Link label editing is an inline input at the link midpoint** (double-click). Dash/arrow
+  toggles land in the M5 context toolbar (mutations already exist).
+- **Links to hidden (collapsed-away) or mid-drag nodes are not painted**; deleting a node
+  cascades to its links inside the same transaction (single undo step restores both).
+- **Connector draw-in**: new edges fade in with their child's enter animation; the §12
+  stroke-dash reveal is deferred to the M7 polish pass (needs per-edge reveal state).

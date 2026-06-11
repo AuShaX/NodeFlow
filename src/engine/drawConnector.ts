@@ -1,4 +1,5 @@
-import type { ConnectorStyle, NodeView, Point, Rect } from '../types'
+import type { ConnectorStyle, LinkView, NodeView, Point, Rect } from '../types'
+import { COLORS, FONT_STACK } from '../theme'
 
 /**
  * Tree connectors per SPEC §7. Always computed from current animated
@@ -123,6 +124,159 @@ export function connectorBounds(parent: NodeView, child: NodeView): Rect {
     y: y - margin,
     w: Math.abs(parent.renderX - child.renderX) + 2 * margin,
     h: Math.abs(parent.renderY - child.renderY) + 2 * margin,
+  }
+}
+
+// ----------------------------------------------------------- cross-links
+
+export interface CrossLinkGeom {
+  p: Point
+  c: Point
+  cp1: Point
+  cp2: Point
+}
+
+/**
+ * Point on a node's border along the ray from its center toward `toward`,
+ * plus that edge's outward normal. Used to anchor cross-links on the nearest
+ * edges of the two nodes.
+ */
+export function anchorOnBox(n: NodeView, toward: Point): { point: Point; normal: Point } {
+  const dx = toward.x - n.renderX
+  const dy = toward.y - n.renderY
+  const hw = n.width / 2
+  const hh = n.height / 2
+  if (dx === 0 && dy === 0)
+    return { point: { x: n.renderX + hw, y: n.renderY }, normal: { x: 1, y: 0 } }
+  // scale the direction so it touches the box border
+  const sx = dx !== 0 ? hw / Math.abs(dx) : Infinity
+  const sy = dy !== 0 ? hh / Math.abs(dy) : Infinity
+  const s = Math.min(sx, sy)
+  const px = n.renderX + dx * s
+  const py = n.renderY + dy * s
+  // normal of the edge we hit
+  const normal: Point = sx < sy ? { x: Math.sign(dx), y: 0 } : { x: 0, y: Math.sign(dy) }
+  return { point: { x: px, y: py }, normal }
+}
+
+/** Bézier between the nearest edges of two nodes, leaving along edge normals. */
+export function crossLinkGeom(a: NodeView, b: NodeView): CrossLinkGeom {
+  const pa = anchorOnBox(a, { x: b.renderX, y: b.renderY })
+  const pb = anchorOnBox(b, { x: a.renderX, y: a.renderY })
+  const dist = Math.hypot(pb.point.x - pa.point.x, pb.point.y - pa.point.y)
+  const reach = Math.max(24, dist * 0.35)
+  return {
+    p: pa.point,
+    c: pb.point,
+    cp1: { x: pa.point.x + pa.normal.x * reach, y: pa.point.y + pa.normal.y * reach },
+    cp2: { x: pb.point.x + pb.normal.x * reach, y: pb.point.y + pb.normal.y * reach },
+  }
+}
+
+export const bezierPoint = (g: CrossLinkGeom, t: number): Point => {
+  const mt = 1 - t
+  return {
+    x: mt ** 3 * g.p.x + 3 * mt * mt * t * g.cp1.x + 3 * mt * t * t * g.cp2.x + t ** 3 * g.c.x,
+    y: mt ** 3 * g.p.y + 3 * mt * mt * t * g.cp1.y + 3 * mt * t * t * g.cp2.y + t ** 3 * g.c.y,
+  }
+}
+
+function drawArrowhead(
+  ctx: CanvasRenderingContext2D,
+  tip: Point,
+  from: Point,
+  color: string,
+): void {
+  const angle = Math.atan2(tip.y - from.y, tip.x - from.x)
+  const size = 8
+  ctx.save()
+  ctx.translate(tip.x, tip.y)
+  ctx.rotate(angle)
+  ctx.beginPath()
+  ctx.moveTo(0, 0)
+  ctx.lineTo(-size, -size * 0.45)
+  ctx.lineTo(-size, size * 0.45)
+  ctx.closePath()
+  ctx.fillStyle = color
+  ctx.fill()
+  ctx.restore()
+}
+
+export interface CrossLinkDrawState {
+  zoom: number
+  selected: boolean
+  /** label hidden while the inline editor is open */
+  hideLabel: boolean
+}
+
+/** Paint a cross-link between two nodes (world-space ctx). */
+export function drawCrossLink(
+  ctx: CanvasRenderingContext2D,
+  a: NodeView,
+  b: NodeView,
+  link: LinkView,
+  s: CrossLinkDrawState,
+): void {
+  const alpha = a.renderAlpha * b.renderAlpha
+  if (alpha <= 0.01) return
+  const g = crossLinkGeom(a, b)
+  const color = COLORS.muted
+  ctx.save()
+  ctx.globalAlpha = alpha
+  ctx.strokeStyle = s.selected ? COLORS.accent : color
+  ctx.lineWidth = 2
+  ctx.lineCap = 'round'
+  if (link.style === 'dashed') ctx.setLineDash([7, 5])
+  ctx.beginPath()
+  ctx.moveTo(g.p.x, g.p.y)
+  ctx.bezierCurveTo(g.cp1.x, g.cp1.y, g.cp2.x, g.cp2.y, g.c.x, g.c.y)
+  ctx.stroke()
+  ctx.setLineDash([])
+
+  const arrowColor = s.selected ? COLORS.accent : color
+  if (link.arrow === 'end' || link.arrow === 'both') {
+    drawArrowhead(ctx, g.c, bezierPoint(g, 0.92), arrowColor)
+  }
+  if (link.arrow === 'both') {
+    drawArrowhead(ctx, g.p, bezierPoint(g, 0.08), arrowColor)
+  }
+
+  if (link.label && !s.hideLabel && s.zoom >= 0.25) {
+    const mid = bezierPoint(g, 0.5)
+    ctx.font = `500 11px ${FONT_STACK}`
+    const w = ctx.measureText(link.label).width
+    const padX = 7
+    const padY = 4
+    ctx.beginPath()
+    ctx.roundRect(mid.x - w / 2 - padX, mid.y - 9 - padY + 2, w + 2 * padX, 18 + 2 * padY - 4, 9)
+    ctx.fillStyle = COLORS.surface
+    ctx.fill()
+    ctx.strokeStyle = s.selected ? COLORS.accent : COLORS.border
+    ctx.lineWidth = 1
+    ctx.stroke()
+    ctx.fillStyle = s.selected ? COLORS.accent : COLORS.muted
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(link.label, mid.x, mid.y + 0.5)
+  }
+  ctx.restore()
+}
+
+/** Midpoint of a cross-link (label anchor, used by the inline label editor). */
+export function crossLinkMidpoint(a: NodeView, b: NodeView): Point {
+  return bezierPoint(crossLinkGeom(a, b), 0.5)
+}
+
+/** Loose bounds for culling a cross-link. */
+export function crossLinkBounds(a: NodeView, b: NodeView): Rect {
+  const x = Math.min(a.renderX, b.renderX)
+  const y = Math.min(a.renderY, b.renderY)
+  const margin = 80
+  return {
+    x: x - margin,
+    y: y - margin,
+    w: Math.abs(a.renderX - b.renderX) + 2 * margin,
+    h: Math.abs(a.renderY - b.renderY) + 2 * margin,
   }
 }
 

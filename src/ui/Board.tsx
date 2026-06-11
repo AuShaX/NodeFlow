@@ -4,6 +4,7 @@ import { createEngine } from '../engine'
 import { createDemoBoard } from '../doc/board'
 import { openBoardDoc } from '../doc/schema'
 import { TextEditorOverlay } from './TextEditorOverlay'
+import { LinkLabelEditor } from './LinkLabelEditor'
 
 /**
  * Hosts the board canvas and owns the engine lifecycle. React renders only
@@ -28,6 +29,7 @@ export function Board() {
     <>
       <canvas ref={canvasRef} className="board-canvas" data-testid="board-canvas" />
       <TextEditorOverlay />
+      <LinkLabelEditor />
     </>
   )
 }

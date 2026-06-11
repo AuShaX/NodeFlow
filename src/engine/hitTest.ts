@@ -1,5 +1,6 @@
-import type { NodeView, Point, SceneSource } from '../types'
-import { nodeRenderRect, pointInRect } from '../types'
+import type { LinkView, NodeView, Point, SceneSource } from '../types'
+import { nodeRenderRect, pointInRect, rectsIntersect } from '../types'
+import { bezierPoint, crossLinkBounds, crossLinkGeom } from './drawConnector'
 
 /**
  * Topmost visible node at a world point, or null. Topmost = last in paint
@@ -28,6 +29,38 @@ export function hitTestNode(
     if (pointInRect(worldPt, nodeRenderRect(n), slop)) return n
   }
   return null
+}
+
+/**
+ * Cross-link under a world point: sample each candidate link's Bézier at 24
+ * points, hit when the pointer is within 6 screen px of the polyline.
+ */
+export function hitTestLink(scene: SceneSource, worldPt: Point, zoom: number): LinkView | null {
+  const tol = 6 / zoom
+  const probe = { x: worldPt.x - tol, y: worldPt.y - tol, w: tol * 2, h: tol * 2 }
+  for (const link of scene.links) {
+    const a = scene.getAnyNode(link.fromId)
+    const b = scene.getAnyNode(link.toId)
+    if (!a || !b || !a.visible || !b.visible) continue
+    if (!rectsIntersect(crossLinkBounds(a, b), probe)) continue
+    const g = crossLinkGeom(a, b)
+    let prev = g.p
+    for (let i = 1; i <= 24; i++) {
+      const cur = bezierPoint(g, i / 24)
+      if (distToSegment(worldPt, prev, cur) <= tol) return link
+      prev = cur
+    }
+  }
+  return null
+}
+
+function distToSegment(p: Point, a: Point, b: Point): number {
+  const abx = b.x - a.x
+  const aby = b.y - a.y
+  const len2 = abx * abx + aby * aby
+  const t =
+    len2 === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * abx + (p.y - a.y) * aby) / len2))
+  return Math.hypot(p.x - (a.x + abx * t), p.y - (a.y + aby * t))
 }
 
 /** Nearest visible node to a world point within `radius`, by box distance. */

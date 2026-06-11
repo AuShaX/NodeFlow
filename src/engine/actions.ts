@@ -1,8 +1,10 @@
 import type { Side } from '../types'
 import type { Board } from '../doc/board'
 import {
+  createLink,
   createNode,
   createRoot,
+  deleteLink,
   deleteSubtree,
   ephemeralOrigin,
   localOrigin,
@@ -11,6 +13,7 @@ import {
   setManualOffset,
   setNodeText,
   setRootPosition,
+  updateLink,
 } from '../doc/schema'
 import {
   clipboardHasContent,
@@ -21,7 +24,7 @@ import {
   serializeSubtree,
 } from '../doc/clipboard'
 import { pickBalancedSide } from '../layout/mindmapLayout'
-import { setSelection, uiStore } from '../state/store'
+import { setLinkSelection, setSelection, uiStore } from '../state/store'
 
 /**
  * High-level board actions shared by the interaction machine, the text editor
@@ -107,6 +110,57 @@ export class BoardActions {
     const node = this.mirror.nodes.get(id)
     if (!node || node.childrenIds.length === 0) return
     setCollapsed(this.board.bd, id, !node.collapsed)
+  }
+
+  /**
+   * Insert a new node between `childId` and its parent: the new node takes
+   * the child's slot, the child becomes its child. One undo step.
+   */
+  insertNodeBefore(childId: string, edit = true): string | null {
+    const child = this.mirror.nodes.get(childId)
+    if (!child || child.parentId === null) return null
+    let newId: string | null = null
+    this.board.bd.doc.transact(() => {
+      newId = createNode(
+        this.board.bd,
+        child.parentId,
+        { side: child.side, color: child.color },
+        { beforeId: childId },
+      )
+      moveNode(this.board.bd, childId, newId, undefined, child.side)
+    }, localOrigin)
+    if (newId) {
+      setSelection([newId])
+      if (edit) this.startEdit(newId, '', true)
+    }
+    return newId
+  }
+
+  // --------------------------------------------------------------- links
+
+  createCrossLink(fromId: string, toId: string): string | null {
+    if (fromId === toId) return null
+    if (!this.mirror.nodes.has(fromId) || !this.mirror.nodes.has(toId)) return null
+    const id = createLink(this.board.bd, fromId, toId)
+    setLinkSelection(id)
+    return id
+  }
+
+  deleteLinkById(id: string): void {
+    deleteLink(this.board.bd, id)
+    if (uiStore.getState().linkSelection === id) setLinkSelection(null)
+  }
+
+  setLinkLabel(id: string, label: string): void {
+    updateLink(this.board.bd, id, { label })
+  }
+
+  setLinkStyle(id: string, style: 'solid' | 'dashed'): void {
+    updateLink(this.board.bd, id, { style })
+  }
+
+  setLinkArrow(id: string, arrow: 'none' | 'end' | 'both'): void {
+    updateLink(this.board.bd, id, { arrow })
   }
 
   // ------------------------------------------------------------- editing
@@ -457,6 +511,13 @@ export class BoardActions {
     if (state.hover && !this.mirror.nodes.has(state.hover)) uiStore.setState({ hover: null })
     if (state.editing && !this.mirror.nodes.has(state.editing.id)) {
       uiStore.setState({ editing: null })
+    }
+    const links = this.mirror.links
+    if (state.linkSelection && !links.some((l) => l.id === state.linkSelection)) {
+      uiStore.setState({ linkSelection: null })
+    }
+    if (state.editingLinkId && !links.some((l) => l.id === state.editingLinkId)) {
+      uiStore.setState({ editingLinkId: null })
     }
   }
 }

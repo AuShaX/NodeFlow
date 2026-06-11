@@ -7,11 +7,17 @@ import type { Animator } from './animator'
 import type { BoardActions } from './actions'
 import type { Board } from '../doc/board'
 import type { DragPreview } from '../doc/mirror'
-import { hitTestNode, nearestNode } from './hitTest'
-import { drawNode } from './drawNode'
-import { drawTreeConnector } from './drawConnector'
+import { hitTestLink, hitTestNode, nearestNode } from './hitTest'
+import { affordanceAt, drawNode } from './drawNode'
+import { anchorOnBox, drawTreeConnector } from './drawConnector'
 import { COLORS } from '../theme'
-import { clearSelection, setSelection, toggleSelected, uiStore } from '../state/store'
+import {
+  clearSelection,
+  setLinkSelection,
+  setSelection,
+  toggleSelected,
+  uiStore,
+} from '../state/store'
 
 const DRAG_THRESHOLD_PX = 4
 const CANDIDATE_RADIUS_PX = 80
@@ -65,6 +71,7 @@ type InteractionState =
       start: { mx: number; my: number; layout: 'auto' | 'manual' }
       last: { mx: number; my: number }
     }
+  | { kind: 'draggingLink'; pointerId: number; fromId: string; curWorld: Point }
 
 export interface EngineHost {
   canvas: HTMLCanvasElement
@@ -109,6 +116,29 @@ export class InteractionMachine {
     }
 
     const world = screenToWorld(this.camera, pos.x, pos.y)
+
+    // Affordances (collapse badge / +/– / link dot) take priority over bodies.
+    const affordance = this.affordanceUnderPointer(world)
+    if (affordance) {
+      const { node, kind } = affordance
+      if (kind === 'badge' || kind === 'minus') {
+        this.host.actions.toggleCollapse(node.id)
+      } else if (kind === 'plus') {
+        setSelection([node.id])
+        this.host.actions.addChild(node.id)
+      } else if (kind === 'linkdot') {
+        this.state = {
+          kind: 'draggingLink',
+          pointerId: e.pointerId,
+          fromId: node.id,
+          curWorld: world,
+        }
+        this.applyCursor()
+      }
+      this.repaint()
+      return
+    }
+
     const hitNode = hitTestNode(this.scene, world)
     if (hitNode) {
       // Select on press, like Miro. Shift toggles into multi-selection.
@@ -124,6 +154,14 @@ export class InteractionMachine {
         alt: e.altKey,
       }
       this.repaint()
+      return
+    }
+
+    const hitLink = hitTestLink(this.scene, world, this.camera.zoom)
+    if (hitLink) {
+      setLinkSelection(hitLink.id)
+      this.repaint()
+      this.state = { kind: 'idle' }
       return
     }
 
@@ -205,6 +243,12 @@ export class InteractionMachine {
         this.host.actions.freeMoveLive(st.nodeId, mx, my, st.isRoot)
         return
       }
+      case 'draggingLink': {
+        if (e.pointerId !== st.pointerId) return
+        st.curWorld = screenToWorld(this.camera, pos.x, pos.y)
+        this.repaint()
+        return
+      }
     }
   }
 
@@ -233,6 +277,14 @@ export class InteractionMachine {
         this.host.actions.freeMoveCommit(st.nodeId, st.start, st.last, st.isRoot)
         this.state = { kind: 'idle' }
         break
+      case 'draggingLink': {
+        const target = hitTestNode(this.scene, st.curWorld)
+        if (target && target.id !== st.fromId) {
+          this.host.actions.createCrossLink(st.fromId, target.id)
+        }
+        this.state = { kind: 'idle' }
+        break
+      }
       default:
         return
     }
@@ -254,10 +306,49 @@ export class InteractionMachine {
     if (hit) {
       setSelection([hit.id])
       this.host.actions.startEdit(hit.id, null)
-    } else {
-      // Double-click on empty canvas: new floating root, edit immediately.
-      this.host.actions.addRootAt(world.x, world.y)
+      return
     }
+    const link = hitTestLink(this.scene, world, this.camera.zoom)
+    if (link) {
+      setLinkSelection(link.id)
+      uiStore.setState({ editingLinkId: link.id })
+      return
+    }
+    // Double-click on empty canvas: new floating root, edit immediately.
+    this.host.actions.addRootAt(world.x, world.y)
+  }
+
+  /** Affordance under the pointer on the hovered/selected nodes (+ any collapsed badge nearby). */
+  private affordanceUnderPointer(
+    world: Point,
+  ): { node: NodeView; kind: ReturnType<typeof affordanceAt> & string } | null {
+    const ui = uiStore.getState()
+    const active = new Set<string>()
+    if (ui.hover) active.add(ui.hover)
+    if (ui.selection.size === 1) active.add([...ui.selection][0])
+    // collapsed badges are always live: probe nearby nodes
+    const probe = 40
+    for (const id of this.scene.spatial.queryRect({
+      x: world.x - probe,
+      y: world.y - probe,
+      w: probe * 2,
+      h: probe * 2,
+    })) {
+      const n = this.scene.nodes.get(id)
+      if (n && n.visible && n.collapsed && n.subtreeCount > 0) active.add(id)
+    }
+    for (const id of active) {
+      const n = this.scene.nodes.get(id)
+      if (!n || !n.visible) continue
+      const kind = affordanceAt(
+        n,
+        this.scene.outwardSide(id),
+        world,
+        ui.hover === id || ui.selection.has(id),
+      )
+      if (kind) return { node: n, kind }
+    }
+    return null
   }
 
   // --------------------------------------------------------- node drags
@@ -451,6 +542,39 @@ export class InteractionMachine {
   /** Painted by the renderer after the scene (world-space ctx). */
   paintOverlay(ctx: CanvasRenderingContext2D, cam: Camera): void {
     const st = this.state
+    if (st.kind === 'draggingLink') {
+      const from = this.scene.nodes.get(st.fromId)
+      if (from) {
+        const a = anchorOnBox(from, st.curWorld)
+        const reach = Math.max(
+          24,
+          Math.hypot(st.curWorld.x - a.point.x, st.curWorld.y - a.point.y) * 0.35,
+        )
+        ctx.save()
+        ctx.strokeStyle = COLORS.accent
+        ctx.lineWidth = 2
+        ctx.globalAlpha = 0.85
+        ctx.setLineDash([7, 5])
+        ctx.beginPath()
+        ctx.moveTo(a.point.x, a.point.y)
+        ctx.bezierCurveTo(
+          a.point.x + a.normal.x * reach,
+          a.point.y + a.normal.y * reach,
+          st.curWorld.x,
+          st.curWorld.y,
+          st.curWorld.x,
+          st.curWorld.y,
+        )
+        ctx.stroke()
+        ctx.setLineDash([])
+        ctx.beginPath()
+        ctx.arc(st.curWorld.x, st.curWorld.y, 3.5, 0, Math.PI * 2)
+        ctx.fillStyle = COLORS.accent
+        ctx.fill()
+        ctx.restore()
+      }
+      return
+    }
     if (st.kind === 'marquee') {
       const r = normRect(st.startWorld, st.curWorld)
       ctx.save()
@@ -617,6 +741,13 @@ export class InteractionMachine {
       return
     }
 
+    const linkSel = uiStore.getState().linkSelection
+    if (linkSel && (e.key === 'Delete' || e.key === 'Backspace')) {
+      actions.deleteLinkById(linkSel)
+      e.preventDefault()
+      return
+    }
+
     // ---- selected-node commands
     if (!selectedId) return
     if (e.key === 'Tab' && !e.shiftKey) {
@@ -734,7 +865,7 @@ export class InteractionMachine {
     let cursor = 'default'
     if (st.kind === 'panning') cursor = 'grabbing'
     else if (st.kind === 'draggingNodes' || st.kind === 'draggingFreeMove') cursor = 'grabbing'
-    else if (st.kind === 'marquee') cursor = 'crosshair'
+    else if (st.kind === 'marquee' || st.kind === 'draggingLink') cursor = 'crosshair'
     else if (uiStore.getState().spaceDown) cursor = 'grab'
     this.host.canvas.style.cursor = cursor
   }

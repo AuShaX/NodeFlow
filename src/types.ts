@@ -16,6 +16,8 @@ export type Shape = 'pill' | 'rounded' | 'rect'
 export type TextSize = 's' | 'm' | 'l'
 export type LayoutDir = 'right' | 'down' | 'both'
 export type Side = 'left' | 'right'
+/** direction children grow away from a node (where badges/affordances sit) */
+export type OutwardSide = 'left' | 'right' | 'down'
 export type ConnectorStyle = 'curved' | 'elbow'
 export type LinkStyle = 'solid' | 'dashed'
 export type ArrowStyle = 'none' | 'end' | 'both'
@@ -101,6 +103,8 @@ export interface SceneSource {
   exiting: readonly NodeView[]
   /** look up a live node, falling back to exiting ones (for edge painting) */
   getAnyNode(id: string): NodeView | undefined
+  /** which way a node's children grow (badge/affordance placement) */
+  outwardSide(id: string): OutwardSide
   /** union of all subtree bounds, or null when the board is empty */
   contentBounds(): Rect | null
 }

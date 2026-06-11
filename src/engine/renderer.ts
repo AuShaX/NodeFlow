@@ -4,9 +4,8 @@ import type { Camera } from './camera'
 import { visibleWorldRect } from './camera'
 import { COLORS } from '../theme'
 import type { Animator } from './animator'
-import type { OutwardSide } from './drawNode'
-import { drawNode } from './drawNode'
-import { connectorBounds, drawTreeConnector } from './drawConnector'
+import { drawAffordances, drawNode } from './drawNode'
+import { connectorBounds, crossLinkBounds, drawCrossLink, drawTreeConnector } from './drawConnector'
 
 export interface RendererStats {
   /** paints in the last sampled second */
@@ -20,8 +19,10 @@ export interface RendererStats {
 interface UIReadout {
   camera: Camera
   selection: ReadonlySet<string>
+  linkSelection: string | null
   hover: string | null
   editingId: string | null
+  editingLinkId: string | null
 }
 
 interface GridPattern {
@@ -130,7 +131,7 @@ export class Renderer {
 
   private paint(now: number): void {
     const t0 = performance.now()
-    const { camera, selection, hover, editingId } = this.readUI()
+    const { camera, selection, linkSelection, hover, editingId, editingLinkId } = this.readUI()
     const ctx = this.ctx
     const dpr = this.dpr
     const zoom = camera.zoom
@@ -193,7 +194,20 @@ export class Renderer {
       )
     }
 
-    // 2) Cross-links (M4).
+    // 2) Cross-links.
+    for (const link of this.scene.links) {
+      const a = this.scene.getAnyNode(link.fromId)
+      const b = this.scene.getAnyNode(link.toId)
+      if (!a || !b) continue
+      if ((!a.visible && !a.vanishing) || (!b.visible && !b.vanishing)) continue
+      if (dragging.has(a.id) || dragging.has(b.id)) continue
+      if (!rectsIntersect(crossLinkBounds(a, b), cullView)) continue
+      drawCrossLink(ctx, a, b, link, {
+        zoom,
+        selected: linkSelection === link.id,
+        hideLabel: editingLinkId === link.id,
+      })
+    }
 
     // 3) Nodes, parents before children.
     for (const id of paintList) {
@@ -205,7 +219,7 @@ export class Renderer {
         selected: selection.has(id),
         hovered: hover === id && !selection.has(id),
         editing: editingId === id,
-        outward: this.outwardSide(n),
+        outward: this.scene.outwardSide(n.id),
       })
       painted++
     }
@@ -227,6 +241,19 @@ export class Renderer {
         outward: 'right',
       })
       painted++
+    }
+
+    // 4b) Affordances (+ / – / link dot) on the hovered or single-selected node.
+    if (zoom >= 0.25 && dragging.size === 0) {
+      const affordanceIds = new Set<string>()
+      if (hover) affordanceIds.add(hover)
+      if (selection.size === 1) affordanceIds.add([...selection][0])
+      for (const id of affordanceIds) {
+        const n = nodes.get(id)
+        if (n && n.visible && editingId !== id) {
+          drawAffordances(ctx, n, this.scene.outwardSide(id))
+        }
+      }
     }
 
     // 5) Overlays (drag previews, marquee) — drawn by the interaction layer.
@@ -259,15 +286,6 @@ export class Renderer {
     let cur: NodeView | undefined = n
     while (cur && cur.parentId !== null) cur = this.scene.getAnyNode(cur.parentId)
     return cur
-  }
-
-  private outwardSide(n: NodeView): OutwardSide {
-    const root = this.rootOf(n)
-    if (root?.dir === 'down') return 'down'
-    if (n.parentId === null) return 'right'
-    const parent = this.scene.nodes.get(n.parentId)
-    if (parent && n.renderX < parent.renderX) return 'left'
-    return 'right'
   }
 
   // ------------------------------------------------------------------- grid

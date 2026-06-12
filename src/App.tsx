@@ -8,7 +8,8 @@ import { ContextMenu } from './ui/ContextMenu'
 import { StylePanel } from './ui/StylePanel'
 import { SearchPalette } from './ui/SearchPalette'
 import { Hud } from './ui/Hud'
-import { getBoardMeta } from './doc/boards'
+import { getBoardMeta, upsertBoardMeta } from './doc/boards'
+import { syncEnabled } from './state/presence'
 
 /** Hash routes: `#/` (board home) and `#/board/:id`. */
 type Route = { view: 'home' } | { view: 'board'; id: string }
@@ -33,7 +34,13 @@ function App() {
 function BoardView({ id }: { id: string }) {
   // Chrome mounts only once the engine exists (the doc opens asynchronously).
   const [ready, setReady] = useState(false)
-  const known = getBoardMeta(id) !== null
+  // Shared link to a board we don't have: with sync on, register + join the
+  // room (the doc streams in); without sync there is nothing to join.
+  let known = getBoardMeta(id) !== null
+  if (!known && syncEnabled()) {
+    upsertBoardMeta(id, { name: 'Shared board' })
+    known = true
+  }
 
   useEffect(() => {
     if (!known) location.hash = '#/'

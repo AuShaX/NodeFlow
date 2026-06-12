@@ -10,15 +10,19 @@
     "check": "tsc -b && eslint . && prettier --check .",
     "format": "prettier --write .",
     "test": "vitest run",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "sync-server": "node server/sync-server.mjs"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.2.8",
+    "lib0": "^0.2.117",
     "lucide-react": "^1.17.0",
     "nanoid": "^5.1.11",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "y-indexeddb": "^9.0.12",
+    "y-protocols": "^1.0.7",
+    "y-websocket": "^3.0.0",
     "yjs": "^13.6.31",
     "zustand": "^5.0.14"
   },
@@ -37,6 +41,7 @@
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
     "vite": "^8.0.12",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.8",
+    "ws": "^8.21.0"
   }
 }

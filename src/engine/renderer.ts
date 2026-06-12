@@ -2,7 +2,8 @@ import type { NodeView, Rect, SceneSource } from '../types'
 import { expandRect, rectsIntersect } from '../types'
 import type { Camera } from './camera'
 import { visibleWorldRect } from './camera'
-import { COLORS, resolveNodeColor } from '../theme'
+import { COLORS, FONT_STACK, resolveNodeColor, textOnFill } from '../theme'
+import { presence } from '../state/presence'
 import type { Animator } from './animator'
 import { drawAffordances, drawNode } from './drawNode'
 import { connectorBounds, crossLinkBounds, drawCrossLink, drawTreeConnector } from './drawConnector'
@@ -290,7 +291,91 @@ export class Renderer {
     // 5) Overlays (drag previews, marquee) — drawn by the interaction layer.
     this.overlayPainter?.(ctx, camera)
 
+    // 6) Collaboration presence: remote selections, editing rings, cursors.
+    if (presence.peers.size > 0) this.paintPresence(ctx, zoom)
+
     this.finishStats(t0, now, painted)
+  }
+
+  /** Remote peers (world-space ctx): chrome-sized via 1/zoom. */
+  private paintPresence(ctx: CanvasRenderingContext2D, zoom: number): void {
+    const s = 1 / zoom
+    // selection outlines
+    for (const [nodeId, color] of presence.selectedBy) {
+      const n = this.scene.nodes.get(nodeId)
+      if (!n || !n.visible) continue
+      const r = nodeRect(n)
+      const pad = 3 * s
+      ctx.save()
+      ctx.strokeStyle = color
+      ctx.globalAlpha = 0.85
+      ctx.lineWidth = 2 * s
+      ctx.beginPath()
+      ctx.roundRect(r.x - pad, r.y - pad, r.w + 2 * pad, r.h + 2 * pad, 8 * s + 4)
+      ctx.stroke()
+      ctx.restore()
+    }
+    // editing indicators: dashed ring + name tag
+    for (const [nodeId, peer] of presence.editingBy) {
+      const n = this.scene.nodes.get(nodeId)
+      if (!n || !n.visible) continue
+      const r = nodeRect(n)
+      const pad = 6 * s
+      ctx.save()
+      ctx.strokeStyle = peer.user.color
+      ctx.lineWidth = 1.5 * s
+      ctx.setLineDash([5 * s, 4 * s])
+      ctx.beginPath()
+      ctx.roundRect(r.x - pad, r.y - pad, r.w + 2 * pad, r.h + 2 * pad, 10 * s + 4)
+      ctx.stroke()
+      ctx.setLineDash([])
+      this.nameTag(ctx, peer.user.name, peer.user.color, r.x, r.y - pad - 16 * s, s)
+      ctx.restore()
+    }
+    // cursors
+    for (const peer of presence.peers.values()) {
+      if (!peer.cursor) continue
+      const { x, y } = peer.cursor
+      ctx.save()
+      ctx.translate(x, y)
+      ctx.scale(s, s)
+      ctx.beginPath()
+      ctx.moveTo(0, 0)
+      ctx.lineTo(0, 15)
+      ctx.lineTo(4.2, 11.2)
+      ctx.lineTo(10.4, 11.2)
+      ctx.closePath()
+      ctx.fillStyle = peer.user.color
+      ctx.fill()
+      ctx.strokeStyle = COLORS.surface
+      ctx.lineWidth = 1.25
+      ctx.stroke()
+      ctx.restore()
+      this.nameTag(ctx, peer.user.name, peer.user.color, x + 12 * s, y + 14 * s, s)
+    }
+  }
+
+  private nameTag(
+    ctx: CanvasRenderingContext2D,
+    name: string,
+    color: string,
+    x: number,
+    y: number,
+    s: number,
+  ): void {
+    ctx.save()
+    ctx.font = `600 ${10.5 * s}px ${FONT_STACK}`
+    const w = ctx.measureText(name).width + 12 * s
+    const h = 16 * s
+    ctx.beginPath()
+    ctx.roundRect(x, y, w, h, 8 * s)
+    ctx.fillStyle = color
+    ctx.fill()
+    ctx.fillStyle = textOnFill(color)
+    ctx.textAlign = 'left'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(name, x + 6 * s, y + h / 2 + 0.5 * s)
+    ctx.restore()
   }
 
   private finishStats(t0: number, now: number, painted: number): void {

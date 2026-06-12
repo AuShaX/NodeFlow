@@ -82,6 +82,20 @@ registry + viewports in localStorage) — no server, no account.
 | Hover edge dot → drag | Draw a cross-link |
 | Click collapse badge | Expand / collapse |
 
+## Collaboration (optional)
+
+Nodeflow is local-first; multiplayer is one command away:
+
+```bash
+npm run sync-server                      # ws://localhost:1234, rooms in server/data/
+VITE_SYNC_URL=ws://localhost:1234 npm run dev
+```
+
+(or set `localStorage['nodeflow-sync-url']` and reload). Then **Share → Copy board
+link** — anyone opening the link on the same server joins live: named cursors, remote
+selections, editing indicators, presence avatars. Undo stays per-user. No accounts
+yet — anyone with a board id can join its room (auth lands with Stage 3).
+
 ## Boards, I/O, theming
 
 - **Board home** (`#/`): create, rename, duplicate, delete; thumbnails refresh on close.

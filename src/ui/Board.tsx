@@ -13,7 +13,10 @@ import {
   upsertBoardMeta,
 } from '../doc/boards'
 import { renderThumbnail } from '../engine/exportImage'
-import { resetBoardUI, setSelection, uiStore } from '../state/store'
+import { connectBoardSync } from '../doc/sync'
+import { presence, syncEnabled } from '../state/presence'
+import { resetBoardUI, setSelection, uiStore, useUI } from '../state/store'
+import { screenToWorld } from '../engine/camera'
 import { TextEditorOverlay } from './TextEditorOverlay'
 import { LinkLabelEditor } from './LinkLabelEditor'
 
@@ -63,6 +66,30 @@ export function Board({ boardId, onReady }: { boardId: string; onReady: (r: bool
       resetBoardUI()
       engine = createEngine(canvas, doc, { initialCamera: loadViewport(boardId) })
       if (starterRootId) setSelection([starterRootId])
+
+      // Collaboration (Stage 2): join the board's room when a server is set.
+      if (syncEnabled()) {
+        const sync = connectBoardSync(doc, boardId)
+        if (sync) {
+          presence.onRepaint = () => engine!.renderer.requestPaint()
+          const onMove = (e: PointerEvent): void => {
+            const rect = canvas.getBoundingClientRect()
+            const cam = uiStore.getState().camera
+            sync.sendCursor(screenToWorld(cam, e.clientX - rect.left, e.clientY - rect.top))
+          }
+          const onLeave = (): void => sync.sendCursor(null)
+          canvas.addEventListener('pointermove', onMove, { passive: true })
+          canvas.addEventListener('pointerleave', onLeave)
+          window.addEventListener('blur', onLeave)
+          cleanupFns.push(() => {
+            canvas.removeEventListener('pointermove', onMove)
+            canvas.removeEventListener('pointerleave', onLeave)
+            window.removeEventListener('blur', onLeave)
+            presence.onRepaint = null
+            sync.destroy()
+          })
+        }
+      }
 
       // Autosave indicator: any doc update → "Saving…", quiet for 700ms → "Saved".
       let saveTimer: number | undefined
@@ -150,8 +177,11 @@ export function Board({ boardId, onReady }: { boardId: string; onReady: (r: bool
 /** Shown when every node has been deleted (SPEC M7 empty states). */
 export function EmptyBoardHint() {
   useMirrorVersion()
+  const syncStatus = useUI((s) => s.syncStatus)
   const engine = engineRef.current
   if (!engine || engine.board.mirror.rootIds.length > 0) return null
+  // a just-joined shared board is empty until the first sync lands
+  if (syncStatus === 'connecting') return null
   return (
     <div className="empty-hint" aria-hidden>
       <p>This board is empty</p>

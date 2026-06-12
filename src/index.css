@@ -1021,3 +1021,67 @@ input:focus-visible,
   color: var(--muted);
   opacity: 0.8;
 }
+
+/* ------------------------------ presence (Stage 2) ------------------------------ */
+
+.presence-stack {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 6px;
+}
+.sync-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+  margin-right: 3px;
+  flex: none;
+}
+.sync-dot.is-online {
+  background: #34a853;
+}
+.presence-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--surface);
+  margin-left: -6px;
+  user-select: none;
+}
+.presence-avatar:first-of-type {
+  margin-left: 0;
+}
+.presence-more {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  padding-left: 2px;
+}
+.share-pop {
+  width: 250px;
+  gap: 8px;
+}
+.share-pop-status {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.share-pop-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+.share-pop-hint code {
+  font-size: 10px;
+  background: var(--inset);
+  border-radius: 4px;
+  padding: 1px 4px;
+}

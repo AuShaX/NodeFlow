@@ -137,3 +137,18 @@ in the browser, all 11 steps.
 
 Next: Stage 2 (realtime collaboration — y-websocket/managed provider evaluation,
 presence, per-user undo) or Stage 4 object widening, depending on product priority.
+
+### 2026-06-13 — Stage 2 collab v1 ships (M8)
+
+Live multiplayer over a self-hosted relay: `npm run sync-server`, point clients at it
+(`VITE_SYNC_URL` / `nodeflow-sync-url`), share the board URL. Presence (named cursors,
+remote selection outlines, editing rings, avatar stack + status dot), per-user undo,
+file-persisted rooms, shared-link join. Verified with two real websocket clients:
+bidirectional edits, presence round-trip, undo scoping, leave cleanup — zero console
+errors.
+
+Still open in Stage 2: follow-mode, offline reconnect UX (y-websocket already retries
+with backoff; needs a "reconnecting" affordance + conflict toast review), managed
+provider cost evaluation if self-hosting becomes a burden, per-field text merging
+(Y.Text per node — today node text is last-writer-wins per field, fine for short
+labels). Then Stage 3 (auth, workspaces, permissions, billing).

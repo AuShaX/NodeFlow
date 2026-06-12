@@ -233,3 +233,27 @@ Running log of spec deviations and judgment calls, newest last. (SPEC §3.)
   `seedPerfBoard(bd, n)` (mulberry32) ships in src/doc/board.ts, reachable in dev via
   `__nodeflow.seedPerf(n)`; `performance.mark('nodeflow:engine-ready')` is the load
   marker.
+- **Collab v1 (Stage 2 / M8) speaks the stock y-websocket protocol** — client uses the
+  unmodified `WebsocketProvider`, the server is our ~180-line relay
+  (`server/sync-server.mjs`: y-protocols sync + awareness, one Y.Doc per room, room =
+  board id, debounced binary snapshots to `server/data/<room>.bin`). No managed
+  service: local-first stays the default (a socket opens only when
+  `VITE_SYNC_URL` or the `nodeflow-sync-url` localStorage key is set), and the
+  protocol choice means Liveblocks/y-sweet/PartyKit remain drop-in swaps later.
+  Anyone with a board id can join its room — auth is explicitly Stage 3.
+- **Presence lives outside React**: awareness states mirror into a mutable
+  `PresenceStore` the renderer reads each frame (cursors arrive at pointer rate);
+  React subscribes only to a version that bumps on join/leave/identity change, so the
+  avatar stack never re-renders on cursor moves. Cursors throttle at 40 ms with a
+  trailing send; remote cursors/name tags/selection outlines/editing rings paint in
+  world space scaled by 1/zoom (constant screen size). Identity is an anonymous
+  adjective-animal name in localStorage plus a palette color keyed by Yjs clientID.
+- **Per-user undo came free**: the UndoManager has tracked localOrigin only since M1,
+  and remote updates carry the provider as origin — verified live (A's undo reverts
+  A's rename while B's concurrent edit stays). Joining an unknown shared link
+  registers the board locally and lets the room stream in; the empty-board hint is
+  suppressed while connecting.
+- **One yjs instance, enforced**: y-websocket ships CJS, so vite's dep optimizer
+  inlined a second yjs copy (yjs/yjs#438 — breaks instanceof checks). Fixed with
+  `resolve.dedupe: ['yjs']` + a shared `optimizeDeps.include` set; the dup-import
+  console error is the regression signal.

@@ -52,6 +52,8 @@ export interface UIState {
   themeMode: ThemeMode
   /** local autosave status shown in the top bar */
   saveState: 'saved' | 'saving'
+  /** collaboration: 'local' = no sync server configured */
+  syncStatus: 'local' | 'connecting' | 'online'
   searchOpen: boolean
   /** node briefly highlighted after a search jump (renderer-driven animation) */
   searchPulse: { id: string; startedAt: number } | null
@@ -72,6 +74,7 @@ export const uiStore = createStore<UIState>()(() => ({
   stylePanelOpen: false,
   themeMode: initialThemeMode(),
   saveState: 'saved',
+  syncStatus: 'local',
   searchOpen: false,
   searchPulse: null,
   spaceDown: false,

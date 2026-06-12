@@ -52,8 +52,10 @@ export interface UIState {
   themeMode: ThemeMode
   /** local autosave status shown in the top bar */
   saveState: 'saved' | 'saving'
-  /** collaboration: 'local' = no sync server configured */
-  syncStatus: 'local' | 'connecting' | 'online'
+  /** collaboration: 'local' = no sync server configured; 'reconnecting' = drop after being online */
+  syncStatus: 'local' | 'connecting' | 'online' | 'reconnecting'
+  /** peer whose viewport we mirror (follow-mode); cleared by any own camera gesture */
+  followingClientId: number | null
   searchOpen: boolean
   /** node briefly highlighted after a search jump (renderer-driven animation) */
   searchPulse: { id: string; startedAt: number } | null
@@ -75,6 +77,7 @@ export const uiStore = createStore<UIState>()(() => ({
   themeMode: initialThemeMode(),
   saveState: 'saved',
   syncStatus: 'local',
+  followingClientId: null,
   searchOpen: false,
   searchPulse: null,
   spaceDown: false,
@@ -93,9 +96,16 @@ export const resetBoardUI = (): void => {
     gesture: 'idle',
     tool: 'select',
     saveState: 'saved',
+    followingClientId: null,
     searchOpen: false,
     searchPulse: null,
   })
+}
+
+export const stopFollowing = (): void => {
+  if (uiStore.getState().followingClientId !== null) {
+    uiStore.setState({ followingClientId: null })
+  }
 }
 
 export function useUI<T>(selector: (s: UIState) => T): T {

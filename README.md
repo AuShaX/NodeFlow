@@ -1,73 +1,110 @@
-# React + TypeScript + Vite
+# Nodeflow
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A fast, local-first mind-mapping app with Miro-grade interaction feel: animated tidy-tree
+layout, drag-to-reparent with live insertion gaps, cross-links, per-branch styling, dark
+mode, multi-board persistence, nine export formats, and full keyboard-first editing —
+rendered on a single canvas at 120 fps.
 
-Currently, two official plugins are available:
+Built on **Yjs** (CRDT document, ready for real-time collaboration), **React** (chrome
+only — the canvas is framework-free), **Vite** and **TypeScript**.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Run it
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run dev        # http://localhost:5173
+npm test           # vitest unit suite
+npm run build      # production build
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+First launch seeds a demo board. Everything persists locally (IndexedDB per board,
+registry + viewports in localStorage) — no server, no account.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## Keyboard shortcuts
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+`Mod` = ⌘ on macOS, Ctrl elsewhere.
+
+### Create & edit
+
+| Keys | Action |
+| --- | --- |
+| `Tab` | Add a child to the selected node |
+| `Enter` | Add a sibling after the selected node |
+| `Shift+Tab` | Select the parent |
+| *type anything* | Start editing the selected node, replacing its text |
+| `F2` | Edit the selected node (cursor at end) |
+| `Enter` (while editing) | Commit, then chain a sibling |
+| `Tab` (while editing) | Commit, then chain a child |
+| `Shift+Enter` (while editing) | New line inside the node |
+| `Esc` (while editing) | Commit and exit |
+| Double-click empty canvas | New floating topic |
+| Double-click a node | Edit it |
+
+### Structure
+
+| Keys | Action |
+| --- | --- |
+| `Delete` / `Backspace` | Delete selection (subtree) or selected link |
+| `.` or `Mod+/` | Collapse / expand the selected branch |
+| `Mod+↑` / `Mod+↓` | Reorder among siblings |
+| `Mod+C` / `Mod+X` / `Mod+V` | Copy / cut / paste subtree (paste at viewport center) |
+| `Mod+D` | Duplicate selection |
+| Drag a node | Reparent (live insertion gap) — release in open space to place it freely |
+| `Mod`+drag a node | Free-move without reparenting |
+| `Alt`+drag a node | Drag a duplicate |
+| `Esc` (mid-drag) | Cancel the gesture |
+
+### Navigate & view
+
+| Keys | Action |
+| --- | --- |
+| Arrow keys | Move selection spatially across the map |
+| `Mod+F` | Search the board (fuzzy; `Enter` jumps & cycles) |
+| `Mod+A` | Select all visible nodes |
+| `Esc` | Peel one layer: menu → gesture → tool → selection |
+| `Mod+0` | Fit map to view |
+| `Mod+1` | Zoom to 100% |
+| `Mod+Z` / `Shift+Mod+Z` | Undo / redo |
+| `Space`+drag / middle-drag | Pan |
+| Wheel / two-finger scroll | Pan |
+| `Mod`+wheel / pinch | Zoom toward cursor |
+| Touch: one finger | Drag nodes, pan on empty canvas |
+| Touch: two fingers | Pinch-zoom around the midpoint |
+| `Mod+Shift+D` | Debug HUD (fps, painted nodes, layout ms) |
+
+### Mouse
+
+| Gesture | Action |
+| --- | --- |
+| Click | Select node or link (`Shift` toggles multi-select) |
+| Drag on empty | Marquee select |
+| Right-click | Context menu (node or link) |
+| Hover edge dot → drag | Draw a cross-link |
+| Click collapse badge | Expand / collapse |
+
+## Boards, I/O, theming
+
+- **Board home** (`#/`): create, rename, duplicate, delete; thumbnails refresh on close.
+- **Export**: PNG (2×, optional transparent), JPG, SVG (true vector), PDF, Markdown
+  outline, OPML, CSV, full-fidelity Nodeflow JSON.
+- **Import**: Markdown outline (headings + any bullet style), OPML, Nodeflow JSON —
+  paste or pick a file; format auto-detected; always creates a new board.
+- **Dark mode**: follows the system, toggleable in the top bar, persisted.
+- `prefers-reduced-motion` disables all tweens.
+
+## Architecture (short version)
+
 ```
+input → interaction machine → mutation API (Yjs transact)
+      → observers update the mirror → incremental tidy layout
+      → animator tweens render fields → canvas renderer paints
+```
+
+React renders chrome only and reads the document through a versioned mirror
+subscription. The renderer reads only mirror + animator + UI store — no Yjs in the hot
+path, no React on the canvas. See `SPEC.md` (the v1 contract), `DECISIONS.md` (running
+log of non-obvious choices, with measured §13 performance numbers) and `ROADMAP.md`
+(stages beyond v1: realtime collaboration, accounts, whiteboard objects).
+
+Verified at 1,000 nodes: 106 ms cold load, 2–4 ms full relayout, 120 fps interactions,
+zero idle paints.

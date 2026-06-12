@@ -38,7 +38,7 @@ type InteractionState =
       pointerId: number
       lastX: number
       lastY: number
-      via: 'space' | 'middle'
+      via: 'space' | 'middle' | 'touch'
     }
   | {
       kind: 'pressingNode'
@@ -237,6 +237,7 @@ export class InteractionMachine {
         const hover = hit ? hit.id : null
         if (uiStore.getState().hover !== hover) {
           uiStore.setState({ hover })
+          this.syncUi() // cursor: pointer over nodes
           this.repaint()
         }
         return
@@ -260,6 +261,18 @@ export class InteractionMachine {
       case 'pressingEmpty': {
         if (e.pointerId !== st.pointerId) return
         if (Math.hypot(pos.x - st.startX, pos.y - st.startY) < DRAG_THRESHOLD_PX) return
+        // touch: one finger on empty canvas pans (SPEC §7); marquee is for mouse/pen
+        if (e.pointerType === 'touch') {
+          this.state = {
+            kind: 'panning',
+            pointerId: st.pointerId,
+            lastX: pos.x,
+            lastY: pos.y,
+            via: 'touch',
+          }
+          this.syncUi()
+          return
+        }
         const startWorld = screenToWorld(this.camera, st.startX, st.startY)
         this.state = {
           kind: 'marquee',
@@ -955,6 +968,18 @@ export class InteractionMachine {
     this.setCamera(zoomAtPoint(cam, cam.zoom * factor, w / 2, h / 2))
   }
 
+  /** Two-finger pinch (SPEC §7): zoom around the midpoint + pan with it. */
+  pinchBy(mid: Point, factor: number, dxScreen: number, dyScreen: number): void {
+    const cam = this.camera
+    const zoomed = zoomAtPoint(cam, cam.zoom * factor, mid.x, mid.y)
+    this.setCamera(panByScreen(zoomed, -dxScreen, -dyScreen))
+  }
+
+  /** Public abort for the input layer (a second touch cancels the gesture). */
+  cancelGesture(): void {
+    if (this.state.kind !== 'idle') this.abortGesture()
+  }
+
   /**
    * Search jump (SPEC §11): reveal the node (expanding collapsed ancestors —
    * a view action, so not undoable), center the camera on it at a readable
@@ -1013,6 +1038,7 @@ export class InteractionMachine {
     else if (st.kind === 'marquee' || st.kind === 'draggingLink') cursor = 'crosshair'
     else if (ui.spaceDown) cursor = 'grab'
     else if (ui.tool !== 'select') cursor = 'crosshair'
+    else if (ui.hover) cursor = 'pointer'
     this.host.canvas.style.cursor = cursor
     if (ui.gesture !== st.kind) uiStore.setState({ gesture: st.kind })
   }

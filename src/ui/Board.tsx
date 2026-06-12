@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import type { Engine } from '../engine'
-import { createEngine } from '../engine'
+import { createEngine, engineRef } from '../engine'
+import { useMirrorVersion } from './hooks'
 import { createDemoBoard } from '../doc/board'
 import { createRoot, initMeta, openBoardDoc, seedOrigin } from '../doc/schema'
 import {
@@ -143,5 +144,20 @@ export function Board({ boardId, onReady }: { boardId: string; onReady: (r: bool
       <TextEditorOverlay />
       <LinkLabelEditor />
     </>
+  )
+}
+
+/** Shown when every node has been deleted (SPEC M7 empty states). */
+export function EmptyBoardHint() {
+  useMirrorVersion()
+  const engine = engineRef.current
+  if (!engine || engine.board.mirror.rootIds.length > 0) return null
+  return (
+    <div className="empty-hint" aria-hidden>
+      <p>This board is empty</p>
+      <span>
+        Double-click anywhere to add a topic — or pick <strong>Add topic</strong> from the toolbar
+      </span>
+    </div>
   )
 }

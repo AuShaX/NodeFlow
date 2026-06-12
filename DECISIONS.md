@@ -223,3 +223,13 @@ Running log of spec deviations and judgment calls, newest last. (SPEC §3.)
 - **The drag ghost never floats disconnected**: a live connector draws from the drop
   candidate (or the current parent when out of range) to the dragged top at 55%
   alpha, matching the tree's axis and connector style.
+- **§13 performance budget verified at 1,001 nodes** (M7, dev build, M-series 120 Hz):
+  initial load (IndexedDB → mirror → layout → first paint) **106 ms** vs 1.5 s budget;
+  full-tree relayout **2.2–4.4 ms** vs 8 ms; pan/zoom/drag sustained **120–121 fps**
+  (display-locked) with worst-case paints ≤ 2.5 ms (drag + live insertion preview);
+  **zero idle paints**. Tidy layout spreads 1k nodes wide enough that the densest
+  editing-zoom viewport holds ~31 nodes — spatial culling keeps paint cost flat, and
+  zoom < 0.1 falls into the subtree-bounds LOD (2 fills). Deterministic
+  `seedPerfBoard(bd, n)` (mulberry32) ships in src/doc/board.ts, reachable in dev via
+  `__nodeflow.seedPerf(n)`; `performance.mark('nodeflow:engine-ready')` is the load
+  marker.

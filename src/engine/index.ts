@@ -105,9 +105,18 @@ export function createEngine(canvas: HTMLCanvasElement, doc: Y.Doc, opts: Engine
     },
   }
   engineRef.current = engine
+  performance.mark('nodeflow:engine-ready')
   if (import.meta.env.DEV) {
     // Dev/E2E hook: lets tests read engine state and drive precise interactions.
-    ;(window as unknown as Record<string, unknown>).__nodeflow = { engine, uiStore }
+    ;(window as unknown as Record<string, unknown>).__nodeflow = {
+      engine,
+      uiStore,
+      seedPerf: (n = 1000) =>
+        import('../doc/board').then((m) => {
+          m.seedPerfBoard(board.bd, n)
+          machine.fitToContent()
+        }),
+    }
   }
   return engine
 }

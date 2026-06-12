@@ -36,6 +36,60 @@ export function createBoard(
   }
 }
 
+/**
+ * Perf-audit seed (SPEC §13): a balanced ~n-node tree with realistic text
+ * variety. Deterministic (mulberry32) so runs are comparable. Not undoable.
+ */
+export function seedPerfBoard(bd: BoardDoc, n = 1000): void {
+  let s = 0x9e3779b9
+  const rand = (): number => {
+    s |= 0
+    s = (s + 0x6d2b79f5) | 0
+    let t = Math.imul(s ^ (s >>> 15), 1 | s)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+  const words = [
+    'launch', 'pricing', 'retention', 'pipeline', 'audit', 'onboarding', 'metrics',
+    'rollout', 'design', 'backlog', 'review', 'capacity', 'experiment', 'funnel',
+    'infra', 'roadmap', 'discovery', 'positioning', 'enablement', 'automation',
+  ]
+  const phrase = (): string => {
+    const len = 1 + Math.floor(rand() * 4)
+    const parts: string[] = []
+    for (let i = 0; i < len; i++) parts.push(words[Math.floor(rand() * words.length)])
+    const t = parts.join(' ')
+    return t[0].toUpperCase() + t.slice(1)
+  }
+  bd.doc.transact(() => {
+    initMeta(bd, `Perf ${n}`)
+    const root = createNode(bd, null, { text: `Perf audit — ${n} nodes` }, undefined, seedOrigin)
+    let made = 1
+    const queue: string[] = []
+    const branches = 8
+    for (let i = 0; i < branches && made < n; i++) {
+      const id = createNode(
+        bd,
+        root,
+        { text: phrase(), side: i % 2 === 0 ? 'right' : 'left' },
+        undefined,
+        seedOrigin,
+      )
+      made++
+      queue.push(id)
+    }
+    while (made < n && queue.length > 0) {
+      const parent = queue.shift()!
+      const kids = 2 + Math.floor(rand() * 4)
+      for (let i = 0; i < kids && made < n; i++) {
+        const id = createNode(bd, parent, { text: phrase() }, undefined, seedOrigin)
+        made++
+        queue.push(id)
+      }
+    }
+  }, seedOrigin)
+}
+
 /** Seed the demo map (SPEC §3) into an empty board. Not undoable. */
 export function createDemoBoard(bd: BoardDoc): void {
   if (bd.nodes.size > 0) return

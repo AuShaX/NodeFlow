@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Board } from './ui/Board'
+import { Board, EmptyBoardHint } from './ui/Board'
 import { BoardHome } from './ui/BoardHome'
 import { TopBar } from './ui/TopBar'
 import { Toolbar } from './ui/Toolbar'
@@ -51,6 +51,7 @@ function BoardView({ id }: { id: string }) {
           <StylePanel />
           <Toolbar />
           <SearchPalette />
+          <EmptyBoardHint />
           <Hud />
         </>
       )}

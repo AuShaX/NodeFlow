@@ -571,6 +571,8 @@ export class Mirror implements SceneSource {
         const n = this.nodes.get(id)
         if (!n) continue
         const moved = Math.abs(n.x - p.x) > 0.01 || Math.abs(n.y - p.y) > 0.01
+        // render parked away from the slot (reverted/cancelled drag ghosts)
+        const renderOff = Math.abs(n.renderX - p.x) > 0.01 || Math.abs(n.renderY - p.y) > 0.01
         n.x = p.x
         n.y = p.y
         if (this.immediateIds?.has(id)) {
@@ -585,7 +587,7 @@ export class Mirror implements SceneSource {
           n.renderX = parent ? parent.renderX : p.x
           n.renderY = parent ? parent.renderY : p.y
           this.animator.tweenTo(n, { x: p.x, y: p.y, alpha: 1, scale: 1 }, ENTER_TWEEN_MS)
-        } else if (n.visible && (moved || n.renderAlpha < 1)) {
+        } else if (n.visible && (moved || renderOff || n.renderAlpha < 1)) {
           this.animator.tweenTo(n, { x: p.x, y: p.y, alpha: 1, scale: 1 })
         } else if (!n.visible && !n.vanishing) {
           n.renderX = p.x

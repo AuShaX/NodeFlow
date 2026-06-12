@@ -174,7 +174,11 @@ export function layoutMindmapRoot(
       ? []
       : node.childrenIds.map(get).filter((c): c is LayoutNodeData => !!c)
     out.set(p.id, anchor)
-    layoutTree(node, kids, anchor, p.orientation)
+    // a freely-placed subtree fans outward from where it actually sits — drag
+    // a branch across its parent and the children flip with it
+    const orientation: Orientation =
+      p.orientation === 'down' ? 'down' : anchor.x >= parentCenter.x ? 'right' : 'left'
+    layoutTree(node, kids, anchor, orientation)
   }
 
   return out

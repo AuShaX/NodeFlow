@@ -206,3 +206,20 @@ Running log of spec deviations and judgment calls, newest last. (SPEC §3.)
   renderer-driven double ring pulse (~1.2 s, self-scheduling frames); fuzzy scoring
   favors exact substrings, word starts and contiguity, and the palette stays open —
   Enter cycles matches, Esc closes.
+- **Dropping in open space is a placement, not a revert** (user feedback on M6): a
+  drag released beyond the candidate radius pins the subtree exactly where it was
+  dropped — a tracked manual offset from the unchanged parent, one undo step. The
+  offset anchors against the parent's mid-drag slot (which already excludes the
+  dragged subtree, the same exclusion manual layout uses), so the node lands
+  pixel-exact under the cursor. Silent reverts left parked ghost renders that layout
+  never re-tweened (slots unchanged), producing "the map shows it moved but selection
+  is dead" — relayout now re-tweens whenever render ≠ slot, which also fixes
+  Escape-cancelled drags.
+- **Freely-placed subtrees orient by where they sit**, not by stored side: layout
+  derives a manual node's fan direction from its anchor relative to the parent
+  (horizontal trees), so dragging a branch across its parent flips the children
+  outward. Depth-1 nodes crossing a both-root's centerline also rewrite their `side`
+  field so balance accounting and "Layout nodes" agree with the placement.
+- **The drag ghost never floats disconnected**: a live connector draws from the drop
+  candidate (or the current parent when out of range) to the dragged top at 55%
+  alpha, matching the tree's axis and connector style.

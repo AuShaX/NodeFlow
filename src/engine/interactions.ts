@@ -495,11 +495,31 @@ export class InteractionMachine {
       n.renderY += st.dy
     }
     const preview = cancelled ? null : st.preview
+    // Releasing in open space = place the subtree exactly there (manual offset
+    // from the same parent). Anchors are computed against the parent's mid-drag
+    // slot, which already excludes the dragged subtree — the same exclusion
+    // manual layout uses — so the node lands precisely under the cursor.
+    const freeDrops = !cancelled && !preview ? this.freeDropOffsets(st) : null
     this.scene.endDrag()
     if (preview) {
       this.host.actions.dropSubtrees(st.topIds, preview.parentId, preview.index, preview.side)
+    } else if (freeDrops && freeDrops.length > 0) {
+      this.host.actions.freeMoveDrop(freeDrops)
     }
     this.state = { kind: 'idle' }
+  }
+
+  private freeDropOffsets(
+    st: Extract<InteractionState, { kind: 'draggingNodes' }>,
+  ): { id: string; mx: number; my: number }[] {
+    const out: { id: string; mx: number; my: number }[] = []
+    for (const id of st.topIds) {
+      const n = this.scene.nodes.get(id)
+      const parent = n?.parentId ? this.scene.nodes.get(n.parentId) : undefined
+      if (!n || !parent) continue
+      out.push({ id, mx: n.renderX - parent.x, my: n.renderY - parent.y })
+    }
+    return out
   }
 
   /**
@@ -676,10 +696,30 @@ export class InteractionMachine {
       }
     }
 
+    // Live edge per dragged top: to the drop candidate, else to the current
+    // parent — the subtree never floats disconnected (Miro behavior).
+    const dragged = this.scene.draggingIds
+    for (const topId of st.topIds) {
+      const top = this.scene.nodes.get(topId)
+      if (!top) continue
+      const anchorId = st.preview ? st.preview.parentId : top.parentId
+      const parent = anchorId ? this.scene.nodes.get(anchorId) : undefined
+      if (!parent || dragged.has(parent.id)) continue
+      const ghost: NodeView = { ...top, renderX: top.renderX + st.dx, renderY: top.renderY + st.dy }
+      const root = this.scene.nodes.get(this.scene.rootOf(parent.id))
+      drawTreeConnector(
+        ctx,
+        parent,
+        ghost,
+        root?.dir === 'down' ? 'v' : 'h',
+        root?.connectorStyle ?? 'curved',
+        0.55,
+      )
+    }
+
     // Ghost subtree at 60% opacity following the cursor.
     ctx.save()
     ctx.translate(st.dx, st.dy)
-    const dragged = this.scene.draggingIds
     for (const id of this.scene.paintList) {
       if (!dragged.has(id)) continue
       const n = this.scene.nodes.get(id)

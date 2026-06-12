@@ -10,7 +10,7 @@ that keep the SaaS path open. Update it whenever research or direction changes.
 ### Stage 1 — v1 mind-map tool (current, SPEC.md M1–M7)
 
 Local-first, single-user, canvas mind mapping with Miro-grade interaction feel.
-Status: M1 ✅ · M2 ✅ · M3 ✅ · M4 ✅ · M5 ✅ · M6–M7 pending.
+Status: M1 ✅ · M2 ✅ · M3 ✅ · M4 ✅ · M5 ✅ · M6 ✅ · M7 pending.
 
 ### Stage 2 — Real-time collaboration
 
@@ -107,3 +107,20 @@ M6 shipped: theme system + dark mode, board home (registry + thumbnails +
 rename/duplicate/delete), per-board y-indexeddb persistence with viewport restore and
 autosave indicator, the full export/import surface above, and Cmd/Ctrl+F fuzzy search
 with collapse-revealing pulse jumps. 117 tests green.
+
+### 2026-06-12 — Drag UX feedback round (post-M6)
+
+User testing against Miro surfaced three drag flaws, all shipped in the M6 follow-up:
+
+- **Out-of-range drops used to revert silently** while the parked ghost kept painting at
+  the drop point (layout slots unchanged → no re-tween) — the map showed a move that
+  never happened, with dead selection at the visible spot. Now an open-space release
+  *places* the subtree there (tracked manual offset, exact under-cursor anchoring), and
+  relayout re-tweens whenever render ≠ slot.
+- **Manual subtrees now orient by actual position** (children flip outward when a branch
+  crosses its parent), and depth-1 crossings of a both-root rewrite `side`.
+- **Live drag connector** to the candidate/current parent — the ghost never floats.
+
+Miro parity check: Miro keeps the edge attached during drags and lets free drops stick
+where released; we now match both and keep the insertion-gap preview Miro lacks at
+sibling level.

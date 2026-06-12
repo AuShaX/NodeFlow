@@ -450,6 +450,34 @@ export class BoardActions {
     }, localOrigin)
   }
 
+  /**
+   * Drop in open space: keep each top's parent but pin it (and its subtree)
+   * exactly where it was released — a tracked manual offset, one undo step.
+   * Depth-1 nodes crossing a both-root's centerline also flip their side so
+   * balance accounting and a later "Layout nodes" agree with the placement.
+   */
+  freeMoveDrop(drops: { id: string; mx: number; my: number }[]): void {
+    this.board.bd.doc.transact(() => {
+      for (const d of drops) {
+        const m = this.board.bd.nodes.get(d.id)
+        if (!m) continue
+        m.set('layout', 'manual')
+        m.set('mx', d.mx)
+        m.set('my', d.my)
+        const side = this.sideForManual(d.id, d.mx)
+        if (side) m.set('side', side)
+      }
+    }, localOrigin)
+  }
+
+  /** Side implied by a manual offset, for depth-1 nodes under a both-root. */
+  private sideForManual(id: string, mx: number): Side | undefined {
+    const n = this.mirror.nodes.get(id)
+    const p = n?.parentId ? this.mirror.nodes.get(n.parentId) : undefined
+    if (!n || !p || p.parentId !== null || (p.dir ?? 'both') !== 'both') return undefined
+    return mx >= 0 ? 'right' : 'left'
+  }
+
   /** Live position writes during free-move / root drags (untracked). */
   freeMoveLive(id: string, mx: number, my: number, isRoot: boolean): void {
     if (isRoot) setRootPosition(this.board.bd, id, mx, my, ephemeralOrigin)
@@ -482,7 +510,15 @@ export class BoardActions {
         m.set('mx', start.mx)
         m.set('my', start.my)
       }, ephemeralOrigin)
-      setManualOffset(this.board.bd, id, end.mx, end.my, localOrigin)
+      this.board.bd.doc.transact(() => {
+        const m = this.board.bd.nodes.get(id)
+        if (!m) return
+        m.set('layout', 'manual')
+        m.set('mx', end.mx)
+        m.set('my', end.my)
+        const side = this.sideForManual(id, end.mx)
+        if (side) m.set('side', side)
+      }, localOrigin)
     }
   }
 

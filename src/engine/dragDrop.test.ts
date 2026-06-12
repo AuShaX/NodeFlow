@@ -182,3 +182,69 @@ describe('clipboard', () => {
     expect(kids[0]).toBe(ids.a1)
   })
 })
+
+describe('free placement (drop in open space)', () => {
+  it('pins the top at a manual offset from its parent, one undo step', () => {
+    const m = board.mirror
+    actions.freeMoveDrop([{ id: ids.a, mx: 300, my: -120 }])
+    const a = m.nodes.get(ids.a)!
+    expect(a.layout).toBe('manual')
+    const root = m.nodes.get(ids.root)!
+    expect(a.x).toBeCloseTo(root.x + 300)
+    expect(a.y).toBeCloseTo(root.y - 120)
+    // children follow the pinned parent
+    const a1 = m.nodes.get(ids.a1)!
+    expect(a1.x).toBeGreaterThan(a.x)
+    actions.undo()
+    expect(m.nodes.get(ids.a)!.layout).toBe('auto')
+  })
+
+  it('crossing a both-root centerline flips side and fans children outward', () => {
+    const m = board.mirror
+    actions.freeMoveDrop([{ id: ids.a, mx: -400, my: 60 }])
+    const a = m.nodes.get(ids.a)!
+    expect(a.side).toBe('left')
+    const root = m.nodes.get(ids.root)!
+    expect(a.x).toBeCloseTo(root.x - 400)
+    // subtree orientation follows the actual position: children fan left
+    const a1 = m.nodes.get(ids.a1)!
+    const a2 = m.nodes.get(ids.a2)!
+    expect(a1.x).toBeLessThan(a.x)
+    expect(a2.x).toBeLessThan(a.x)
+  })
+
+  it('manual offsets survive moving the parent root', () => {
+    const m = board.mirror
+    actions.freeMoveDrop([{ id: ids.a, mx: 250, my: 90 }])
+    const before = m.nodes.get(ids.a)!
+    const rootBefore = m.nodes.get(ids.root)!
+    const relX = before.x - rootBefore.x
+    const relY = before.y - rootBefore.y
+    // move the root far away (free-move commit path)
+    actions.freeMoveCommit(
+      ids.root,
+      { mx: rootBefore.x, my: rootBefore.y, layout: 'auto' },
+      { mx: rootBefore.x + 1000, my: rootBefore.y + 500 },
+      true,
+    )
+    const after = m.nodes.get(ids.a)!
+    const rootAfter = m.nodes.get(ids.root)!
+    expect(after.layout).toBe('manual')
+    expect(after.x - rootAfter.x).toBeCloseTo(relX)
+    expect(after.y - rootAfter.y).toBeCloseTo(relY)
+  })
+
+  it('parked ghost renders re-tween home when slots did not change', () => {
+    const m = board.mirror
+    const a = m.nodes.get(ids.a)!
+    // simulate a reverted drag: render parked away from an unchanged slot
+    m.beginDrag([ids.a])
+    a.renderX = a.x + 500
+    a.renderY = a.y + 200
+    m.endDrag()
+    // relayout must notice render≠slot and target the slot again
+    const anim = board.mirror['animator'] as Animator
+    const moving = anim.tick(performance.now() + 16)
+    expect(moving).toBe(true)
+  })
+})

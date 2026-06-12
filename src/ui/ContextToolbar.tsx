@@ -17,6 +17,7 @@ import { setStylePanelOpen, uiStore, useUI } from '../state/store'
 import type { NodeView, Rect, Shape, TextSize } from '../types'
 import { nodeRenderRect, rectUnion, clamp } from '../types'
 import { crossLinkMidpoint } from '../engine/drawConnector'
+import { resolveNodeColor } from '../theme'
 import { useForwardWheel, useMirrorVersion } from './hooks'
 import { ColorPalette, Divider, IconButton, Popover, Segmented } from './kit'
 import {
@@ -128,7 +129,7 @@ function NodeToolbar({ engine, ids }: { engine: Engine; ids: string[] }) {
         <IconButton label="Color" active={pop === 'color'} onClick={() => toggle('color')}>
           <span
             className={'swatch-preview' + (swatchColor === null ? ' is-mixed' : '')}
-            style={swatchColor ? { background: swatchColor } : undefined}
+            style={swatchColor ? { background: resolveNodeColor(swatchColor) } : undefined}
           />
         </IconButton>
         <Popover open={pop === 'color'} onClose={() => setPop(null)} label="Node color">

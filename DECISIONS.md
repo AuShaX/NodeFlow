@@ -153,3 +153,56 @@ Running log of spec deviations and judgment calls, newest last. (SPEC §3.)
   land in M6, share with Stage-2 collaboration) so the §12 layout is final without
   dead-looking gaps later. Floating chrome forwards wheel events to the canvas
   (non-passive) — no pan/zoom dead zones over the toolbars.
+
+## M6 — Persistence, boards, I/O, search, dark mode
+
+- **`COLORS` is a live-mutated theme object** (`Object.assign` on switch), not a set of
+  constants: every canvas paint site keeps reading `COLORS.*` per frame with zero call
+  site churn. Roots with no explicit color store the `'auto-root'` sentinel in
+  `effectiveColor`; `resolveNodeColor()` maps it to the theme's `rootFill` at paint time
+  (light: ink chip, dark: paper chip). Node text uses luminance-based `textOnFill()` so
+  custom fills stay readable in both themes. CSS gets the same values via
+  `:root[data-theme='dark']` custom-property overrides; the dot-grid pattern cache keys
+  on the dot color and remakes tiles on switch. First paint honors
+  localStorage → `prefers-color-scheme`.
+- **Exports always use the light palette** (swap-and-restore around the offscreen
+  paint): shared artifacts shouldn't depend on the author's theme.
+- **One IndexedDB database per board** (`nodeflow-board-<id>`, y-indexeddb), with a
+  localStorage **registry** (id, name, timestamps, JPEG thumbnail ≤ ~13 KB) so the home
+  grid renders without opening any doc. Hash routing (`#/` home, `#/board/:id`)
+  needs no router dependency. Board chrome mounts only after the doc syncs (async
+  open), keyed remounts per board id.
+- **Viewport restore must not wait for a frame**: rAF never fires on hidden pages
+  (background-tab opens), and the pagehide snapshot would persist the default camera
+  over the saved one. The camera restores synchronously in `createEngine`; only
+  fit-to-content (which needs a measured canvas) stays in the rAF. Found by the
+  preview browser running hidden — a real background-tab bug.
+- **Autosave indicator is honest-but-simple**: any doc update → "Saving…", 700 ms of
+  quiet → "Saved" (y-indexeddb exposes no flush event; IndexedDB writes are
+  fast-local). Registry name/updatedAt sync is debounced 1 s off mirror updates;
+  thumbnails regenerate on board close and pagehide.
+- **Home renames write through to the closed doc** (`renameClosedBoard` opens the doc,
+  sets meta, closes): registry-only renames would be overwritten by the doc's name on
+  next open. Delete is a two-click in-place confirm (3 s window) — no modal, and
+  board deletion is intentionally not undoable (idb wipe).
+- **Import always creates a new board** (Miro-style "create from file"), never merges
+  into the current one; failed imports delete their half-created board. Format
+  detection: extension first, then content sniffing (`{` → JSON, `<opml`/`<?xml` →
+  OPML, else Markdown outline). The Markdown parser accepts headings + any
+  bullet/indent mix (tabs or spaces, indent-width stack); our own exports round-trip,
+  including `<br>`-folded multi-line text and cross-link footnotes (stripped on
+  import). OPML uses `_collapsed`/`_color` custom attrs and reads OPML-1 `title`.
+  JSON re-keys all node ids on import (collision-free), preserving sibling order via
+  stable depth sort.
+- **SVG export is true vector** built from the same geometry functions the canvas uses
+  (connector controls, wrapped text lines); Inter is referenced with system fallbacks,
+  not embedded. **PDF is a hand-rolled single page embedding the @2x JPEG**
+  (DCTDecode) — matches Miro's standard-quality raster PDF without a dependency;
+  vector PDF needs font embedding and is deferred. CSV keeps structure as
+  `depth,text,parent` rows (RFC 4180).
+- **Search jumps are view actions**: revealing a match inside a collapsed subtree
+  expands ancestors with the ephemeral (untracked) origin so Cmd/Ctrl+F never creates
+  undo entries. The jump is an instant center (zoom clamped to 0.75–1.5) plus a
+  renderer-driven double ring pulse (~1.2 s, self-scheduling frames); fuzzy scoring
+  favors exact substrings, word starts and contiguity, and the palette stays open —
+  Enter cycles matches, Esc closes.

@@ -27,7 +27,12 @@ export const engineRef: { current: Engine | null } = { current: null }
  * machine → mutation API → observers update mirror → layout → animator →
  * renderer.
  */
-export function createEngine(canvas: HTMLCanvasElement, doc: Y.Doc): Engine {
+export interface EngineOptions {
+  /** restore this camera instead of the initial fit-to-content */
+  initialCamera?: { x: number; y: number; zoom: number } | null
+}
+
+export function createEngine(canvas: HTMLCanvasElement, doc: Y.Doc, opts: EngineOptions = {}): Engine {
   const animator = new Animator()
   let renderer: Renderer | null = null
   const board = createBoard(animator, () => renderer?.requestPaint(), doc)
@@ -40,6 +45,7 @@ export function createEngine(canvas: HTMLCanvasElement, doc: Y.Doc): Engine {
       hover: s.hover,
       editingId: s.editing?.id ?? null,
       editingLinkId: s.editingLinkId,
+      searchPulse: s.searchPulse,
     }
   })
   const actions = new BoardActions(board)
@@ -71,10 +77,14 @@ export function createEngine(canvas: HTMLCanvasElement, doc: Y.Doc): Engine {
   }
   watchDpr()
 
-  // Initial view: fit the content once the canvas has a real size.
+  // Initial view. The camera restore must NOT wait for a frame: rAF never
+  // fires on hidden pages (background-tab opens), and a pagehide there would
+  // overwrite the saved viewport with the default. Restore synchronously;
+  // only fit-to-content needs the measured canvas size.
+  if (opts.initialCamera) uiStore.setState({ camera: opts.initialCamera })
   requestAnimationFrame(() => {
     renderer!.resize()
-    machine.fitToContent()
+    if (!opts.initialCamera) machine.fitToContent()
   })
 
   const engine: Engine = {

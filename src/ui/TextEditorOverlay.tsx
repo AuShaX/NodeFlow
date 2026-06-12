@@ -3,7 +3,7 @@ import { engineRef } from '../engine'
 import type { EditingState } from '../state/store'
 import { uiStore, useUI } from '../state/store'
 import { FONT_SIZES, LINE_HEIGHTS, MAX_TEXT_WIDTH } from '../engine/textMeasure'
-import { FONT_STACK } from '../theme'
+import { FONT_STACK, resolveNodeColor, textOnFill } from '../theme'
 
 /**
  * Inline node text editing (SPEC §10): a single contenteditable positioned
@@ -50,7 +50,8 @@ function Editor({ editing }: { editing: EditingState }) {
       const sx = (node.renderX - camera.x) * camera.zoom
       const sy = (node.renderY - camera.y) * camera.zoom
       const deep = node.depth >= 2
-      const color = deep ? node.effectiveColor : '#FFFFFF'
+      const fill = resolveNodeColor(node.effectiveColor)
+      const color = deep ? fill : textOnFill(fill)
       el.style.transform = `translate(${sx}px, ${sy}px) scale(${camera.zoom}) translate(-50%, -50%)`
       el.style.color = color
       el.style.caretColor = color

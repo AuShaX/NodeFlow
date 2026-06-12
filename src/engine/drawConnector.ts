@@ -1,5 +1,5 @@
 import type { ConnectorStyle, LinkView, NodeView, Point, Rect } from '../types'
-import { COLORS, FONT_STACK } from '../theme'
+import { COLORS, FONT_STACK, resolveNodeColor } from '../theme'
 
 /**
  * Tree connectors per SPEC §7. Always computed from current animated
@@ -106,7 +106,7 @@ export function drawTreeConnector(
   const g = connectorGeom(parent, child, axis)
   ctx.save()
   ctx.globalAlpha = alpha
-  ctx.strokeStyle = child.effectiveColor
+  ctx.strokeStyle = resolveNodeColor(child.effectiveColor)
   ctx.lineWidth = child.depth === 1 ? 2.5 : 2
   ctx.lineCap = 'round'
   buildConnectorPath(ctx, g, style)

@@ -1,5 +1,5 @@
 import type { NodeView, OutwardSide, Point } from '../types'
-import { COLORS, FONT_STACK } from '../theme'
+import { COLORS, FONT_STACK, resolveNodeColor, textOnFill } from '../theme'
 import { fontFor, LINE_HEIGHTS } from './textMeasure'
 
 export type { OutwardSide }
@@ -40,10 +40,11 @@ export function drawNode(ctx: CanvasRenderingContext2D, n: NodeView, s: NodeDraw
   }
 
   const deep = n.depth >= 2
+  const color = resolveNodeColor(n.effectiveColor)
 
   // LOD: tiny zoom — solid colored block, no text, no chrome.
   if (s.zoom < 0.25) {
-    ctx.fillStyle = n.effectiveColor
+    ctx.fillStyle = color
     nodePath(ctx, n)
     ctx.fill()
     ctx.restore()
@@ -52,17 +53,17 @@ export function drawNode(ctx: CanvasRenderingContext2D, n: NodeView, s: NodeDraw
 
   // Box
   nodePath(ctx, n)
-  ctx.fillStyle = deep ? COLORS.surface : n.effectiveColor
+  ctx.fillStyle = deep ? COLORS.surface : color
   ctx.fill()
   if (deep) {
-    ctx.strokeStyle = n.effectiveColor
+    ctx.strokeStyle = color
     ctx.lineWidth = 2
     ctx.stroke()
   }
 
   // Text
   if (!s.editing && n.textLines.length > 0) {
-    ctx.fillStyle = deep ? n.effectiveColor : '#FFFFFF'
+    ctx.fillStyle = deep ? color : textOnFill(color)
     ctx.font = fontFor(n.textStyle)
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
@@ -232,14 +233,15 @@ function drawCollapsedBadge(
   outward: OutwardSide,
 ): void {
   const { x, y } = collapsedBadgeCenter(n, outward)
+  const color = resolveNodeColor(n.effectiveColor)
   ctx.beginPath()
   ctx.arc(x, y, BADGE_R, 0, Math.PI * 2)
   ctx.fillStyle = COLORS.surface
   ctx.fill()
-  ctx.strokeStyle = n.effectiveColor
+  ctx.strokeStyle = color
   ctx.lineWidth = 1.5
   ctx.stroke()
-  ctx.fillStyle = n.effectiveColor
+  ctx.fillStyle = color
   ctx.font = `600 10px ${FONT_STACK}`
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'

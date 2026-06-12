@@ -2,7 +2,7 @@ import type { NodeView, Rect, SceneSource } from '../types'
 import { expandRect, rectsIntersect } from '../types'
 import type { Camera } from './camera'
 import { visibleWorldRect } from './camera'
-import { COLORS } from '../theme'
+import { COLORS, resolveNodeColor } from '../theme'
 import type { Animator } from './animator'
 import { drawAffordances, drawNode } from './drawNode'
 import { connectorBounds, crossLinkBounds, drawCrossLink, drawTreeConnector } from './drawConnector'
@@ -23,12 +23,15 @@ interface UIReadout {
   hover: string | null
   editingId: string | null
   editingLinkId: string | null
+  searchPulse: { id: string; startedAt: number } | null
 }
 
 interface GridPattern {
   pattern: CanvasPattern
   sizePx: number
   level: number
+  /** dot color baked into the tile — entries are remade on theme switches */
+  dot: string
 }
 
 const GRID_LEVELS = [8, 40, 200]
@@ -131,7 +134,8 @@ export class Renderer {
 
   private paint(now: number): void {
     const t0 = performance.now()
-    const { camera, selection, linkSelection, hover, editingId, editingLinkId } = this.readUI()
+    const { camera, selection, linkSelection, hover, editingId, editingLinkId, searchPulse } =
+      this.readUI()
     const ctx = this.ctx
     const dpr = this.dpr
     const zoom = camera.zoom
@@ -161,11 +165,12 @@ export class Renderer {
         if (!n) continue
         const b = n.subtreeBounds
         if (!rectsIntersect(b, cullView)) continue
-        ctx.fillStyle = n.effectiveColor
+        const color = resolveNodeColor(n.effectiveColor)
+        ctx.fillStyle = color
         ctx.globalAlpha = 0.18
         ctx.fillRect(b.x, b.y, b.w, b.h)
         ctx.globalAlpha = 1
-        ctx.fillStyle = n.effectiveColor
+        ctx.fillStyle = color
         const r = nodeRect(n)
         ctx.fillRect(r.x, r.y, r.w, r.h)
         painted++
@@ -256,6 +261,32 @@ export class Renderer {
       }
     }
 
+    // 4c) Search-jump pulse: two expanding rings fading over ~1.2s.
+    if (searchPulse) {
+      const n = nodes.get(searchPulse.id)
+      const age = now - searchPulse.startedAt
+      if (n && n.visible && age >= 0 && age < 1200) {
+        const phase = (age % 600) / 600
+        const grow = 5 + phase * 16
+        const r = nodeRect(n)
+        ctx.save()
+        ctx.globalAlpha = (1 - phase) * 0.65
+        ctx.strokeStyle = COLORS.accent
+        ctx.lineWidth = 2.5
+        ctx.beginPath()
+        ctx.roundRect(
+          r.x - grow,
+          r.y - grow,
+          r.w + 2 * grow,
+          r.h + 2 * grow,
+          (n.shape === 'pill' ? n.height / 2 : n.shape === 'rounded' ? 10 : 3) + grow,
+        )
+        ctx.stroke()
+        ctx.restore()
+        this.requestPaint() // keep the pulse animating
+      }
+    }
+
     // 5) Overlays (drag previews, marquee) — drawn by the interaction layer.
     this.overlayPainter?.(ctx, camera)
 
@@ -326,7 +357,7 @@ export class Renderer {
 
   private gridPattern(level: number, sizePx: number): GridPattern | null {
     let entry = this.gridPatterns.find((p) => p.level === level)
-    if (entry && entry.sizePx === sizePx) return entry
+    if (entry && entry.sizePx === sizePx && entry.dot === COLORS.dot) return entry
     const tile = document.createElement('canvas')
     tile.width = sizePx
     tile.height = sizePx
@@ -340,11 +371,12 @@ export class Renderer {
     const pattern = this.ctx.createPattern(tile, 'repeat')
     if (!pattern) return null
     if (!entry) {
-      entry = { pattern, sizePx, level }
+      entry = { pattern, sizePx, level, dot: COLORS.dot }
       this.gridPatterns.push(entry)
     } else {
       entry.pattern = pattern
       entry.sizePx = sizePx
+      entry.dot = COLORS.dot
     }
     return entry
   }

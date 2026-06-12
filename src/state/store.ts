@@ -1,6 +1,8 @@
 import { createStore } from 'zustand/vanilla'
 import { useStore } from 'zustand'
 import type { Camera } from '../engine/camera'
+import type { ThemeMode } from '../theme'
+import { applyTheme, initialThemeMode } from '../theme'
 
 export type Tool = 'select' | 'addRoot' | 'link'
 
@@ -47,6 +49,12 @@ export interface UIState {
   gesture: GestureKind
   tool: Tool
   stylePanelOpen: boolean
+  themeMode: ThemeMode
+  /** local autosave status shown in the top bar */
+  saveState: 'saved' | 'saving'
+  searchOpen: boolean
+  /** node briefly highlighted after a search jump (renderer-driven animation) */
+  searchPulse: { id: string; startedAt: number } | null
   spaceDown: boolean
   hudVisible: boolean
 }
@@ -62,9 +70,30 @@ export const uiStore = createStore<UIState>()(() => ({
   gesture: 'idle',
   tool: 'select',
   stylePanelOpen: false,
+  themeMode: initialThemeMode(),
+  saveState: 'saved',
+  searchOpen: false,
+  searchPulse: null,
   spaceDown: false,
   hudVisible: false,
 }))
+
+/** Reset per-board UI state when switching boards (camera is set separately). */
+export const resetBoardUI = (): void => {
+  uiStore.setState({
+    selection: new Set(),
+    linkSelection: null,
+    hover: null,
+    editing: null,
+    editingLinkId: null,
+    contextMenu: null,
+    gesture: 'idle',
+    tool: 'select',
+    saveState: 'saved',
+    searchOpen: false,
+    searchPulse: null,
+  })
+}
 
 export function useUI<T>(selector: (s: UIState) => T): T {
   return useStore(uiStore, selector)
@@ -108,4 +137,14 @@ export const setTool = (tool: Tool): void => {
 
 export const setStylePanelOpen = (open: boolean): void => {
   uiStore.setState({ stylePanelOpen: open })
+}
+
+/** Swap the live palette + CSS scope, then notify (engine repaints via subscription). */
+export const setThemeMode = (mode: ThemeMode): void => {
+  applyTheme(mode)
+  uiStore.setState({ themeMode: mode })
+}
+
+export const setSearchOpen = (open: boolean): void => {
+  uiStore.setState({ searchOpen: open })
 }

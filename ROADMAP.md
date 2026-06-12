@@ -92,3 +92,18 @@ Sources: [Miro Help: Mind map](https://help.miro.com/hc/en-us/articles/360017730
 - Pricing teardown: Miro/FigJam/Whimsical tiers and limits (Stage 3 design input).
 - Multiplayer providers comparison: y-websocket vs Liveblocks vs PartyKit costs at small
   scale (Stage 2).
+
+### 2026-06-12 — Miro export surface (M6 I/O scope)
+
+Verified against Miro Help Center before building the export menu: Miro boards export
+to **image (PNG/JPG), vector/PDF, and CSV** (mind-map/table contexts), with
+high-res raster behind paid tiers; there is no Markdown/OPML export. Nodeflow ships
+**PNG (2×), transparent PNG, JPG, SVG (true vector), PDF** plus text formats Miro
+lacks — **Markdown, OPML, CSV, full-fidelity JSON** — because mind-map users
+round-trip with outliners (workflowy/obsidian) constantly. Import: Markdown / OPML /
+Nodeflow JSON, file-or-paste, always into a new board (Miro's "create from" pattern).
+
+M6 shipped: theme system + dark mode, board home (registry + thumbnails +
+rename/duplicate/delete), per-board y-indexeddb persistence with viewport restore and
+autosave indicator, the full export/import surface above, and Cmd/Ctrl+F fuzzy search
+with collapse-revealing pulse jumps. 117 tests green.

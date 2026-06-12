@@ -1,5 +1,6 @@
 import type { NodeView, Point, Rect, Side } from '../types'
-import { nodeRenderRect, rectsIntersect } from '../types'
+import { clamp, nodeRenderRect, rectsIntersect } from '../types'
+import { ephemeralOrigin } from '../doc/schema'
 import type { Camera } from './camera'
 import { centerOn, fitBounds, panByScreen, screenToWorld, zoomAtPoint } from './camera'
 import type { Renderer } from './renderer'
@@ -912,6 +913,39 @@ export class InteractionMachine {
     const cam = this.camera
     const { w, h } = this.host.renderer.viewportSize
     this.setCamera(zoomAtPoint(cam, cam.zoom * factor, w / 2, h / 2))
+  }
+
+  /**
+   * Search jump (SPEC §11): reveal the node (expanding collapsed ancestors —
+   * a view action, so not undoable), center the camera on it at a readable
+   * zoom, select it and start the highlight pulse.
+   */
+  focusNode(id: string): void {
+    const mirror = this.scene
+    const bd = this.host.board.bd
+    const collapsedAncestors: string[] = []
+    let cur = mirror.nodes.get(id)
+    while (cur && cur.parentId !== null) {
+      const parent = mirror.nodes.get(cur.parentId)
+      if (!parent) break
+      if (parent.collapsed) collapsedAncestors.push(parent.id)
+      cur = parent
+    }
+    if (collapsedAncestors.length > 0) {
+      bd.doc.transact(() => {
+        for (const pid of collapsedAncestors) {
+          const m = bd.nodes.get(pid)
+          if (m) m.set('collapsed', false)
+        }
+      }, ephemeralOrigin)
+    }
+    const n = mirror.nodes.get(id)
+    if (!n) return
+    const { w, h } = this.host.renderer.viewportSize
+    const zoom = clamp(this.camera.zoom, 0.75, 1.5)
+    this.setCamera(centerOn(n.x, n.y, zoom, w, h))
+    setSelection([id])
+    uiStore.setState({ searchPulse: { id, startedAt: performance.now() } })
   }
 
   // ------------------------------------------------------------ helpers

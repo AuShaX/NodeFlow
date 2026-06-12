@@ -10,7 +10,7 @@ that keep the SaaS path open. Update it whenever research or direction changes.
 ### Stage 1 — v1 mind-map tool (current, SPEC.md M1–M7)
 
 Local-first, single-user, canvas mind mapping with Miro-grade interaction feel.
-Status: M1 ✅ · M2 ✅ · M3 ✅ · M4 ✅ · M5 ✅ · M6 ✅ · M7 pending.
+Status: M1 ✅ · M2 ✅ · M3 ✅ · M4 ✅ · M5 ✅ · M6 ✅ · M7 ✅ — **Stage 1 complete.**
 
 ### Stage 2 — Real-time collaboration
 
@@ -124,3 +124,16 @@ User testing against Miro surfaced three drag flaws, all shipped in the M6 follo
 Miro parity check: Miro keeps the edge attached during drags and lets free drops stick
 where released; we now match both and keep the insertion-gap preview Miro lacks at
 sibling level.
+
+### 2026-06-12 — M7 polish pass closes Stage 1
+
+§13 budget verified at 1,001 nodes (numbers in DECISIONS.md): 106 ms cold load,
+2.2–4.4 ms full relayout, 120–121 fps pan/zoom/drag, zero idle paints. Touch shipped
+(two-finger pinch around the midpoint in the input layer, one-finger pan on empty
+canvas, post-pinch survivors swallowed until lift). Reduced-motion was already
+honored by the animator; added the empty-board hint, pointer cursor on hover, and a
+real README with the full shortcut table. §14 definition-of-done walked end-to-end
+in the browser, all 11 steps.
+
+Next: Stage 2 (realtime collaboration — y-websocket/managed provider evaluation,
+presence, per-user undo) or Stage 4 object widening, depending on product priority.
